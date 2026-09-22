@@ -1,0 +1,9 @@
+# Only pyproject.toml, LICENSE, Readme.md and nucleiquant/ are actually
+# COPYd into the image (see Dockerfile) -- everything else is mounted at
+# runtime via -v, so keep it out of the build context entirely.
+*
+!pyproject.toml
+!LICENSE
+!Readme.md
+!nucleiquant/
+!nucleiquant/**

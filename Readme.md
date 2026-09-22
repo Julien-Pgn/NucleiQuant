@@ -34,14 +34,23 @@ If you use this repository or any derivative models, please cite the above paper
 ---
 ## Installation
 
-Requirements
-- Python ≥ 3.9  
-- Tested on macOS and Linux  
-- Required packages:
+The pipeline needs a TensorFlow/CUDA combination that's easy to get wrong by hand, so a Docker image is
+provided. It works the same whether your computer has an NVIDIA GPU or not.
+
+**Requirements:** [Docker](https://docs.docker.com/get-docker/), and for GPU use, the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 
 ```bash
-  pip install stardist csbdeep tensorflow numpy matplotlib pandas scikit-image jupyter
+./run_container.sh build              # once
+./run_container.sh jupyter            # notebooks, with GPU -> http://localhost:8888
+./run_container.sh jupyter_cpu        # notebooks, no GPU needed
+./run_container.sh exec python scripts/01_segmentation.py   # run a script directly
+./run_container.sh stop               # stop the Jupyter server
 ```
+
+No GPU on your machine? Every `exec`/`jupyter` mode has a `_cpu` variant — same image, no extra setup.
+
+Prefer to install without Docker? Exact package versions are pinned in `pyproject.toml`.
 
 ---
 ## Usage
