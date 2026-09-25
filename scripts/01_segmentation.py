@@ -1,11 +1,12 @@
 """
 This script segments TIFF images on channel 0 using a fine-tuned StarDist model.
-The user must modify the 'dir_img' variable to specify the path to the folder containing the TIFF images.
+Pass the folder containing the TIFF images with --images (see --help for all options).
 Segmented label images are saved in 'lbl/' and ImageJ ROIs in 'roi/' subfolders of the input directory.
 WARNING: Existing files in 'lbl/' and 'roi/' will be overwritten
 """
 
 
+import argparse
 import os
 import h5py
 import numpy as np
@@ -16,9 +17,15 @@ from zipfile import ZIP_DEFLATED
 from csbdeep.utils import normalize
 
 
-# ======== TO BE MODIFIED BY THE USER: indicate in which folder your images are located ==========
-dir_img = '/img_test_pipeline/' # Replace with your image directory
-# ================================================================================================
+def parse_args():
+    parser = argparse.ArgumentParser(description="Segment nuclei in TIFF images with the fine-tuned StarDist model.")
+    parser.add_argument("--images", required=True, help="Path to the folder containing the TIFF images to segment.")
+    parser.add_argument("--model-dir", default="models", help="Path to the folder containing the stardist_haug2 model (default: models).")
+    return parser.parse_args()
+
+
+args = parse_args()
+dir_img = args.images
 
 # Output directory for labels and ROIs
 output_lbl = os.path.join(dir_img, 'lbl')
@@ -42,7 +49,7 @@ if not tif_images:
     exit()
 
 # Load the Stardist model: StarDist Haug2 is located in the /models folder (from the github repo)
-model = StarDist2D(None, name='stardist_haug2', basedir='models')
+model = StarDist2D(None, name='stardist_haug2', basedir=args.model_dir)
 
 # Loop through TIFF files
 for index, filename in enumerate(tif_images, 1):
@@ -50,7 +57,9 @@ for index, filename in enumerate(tif_images, 1):
     try:
         # Read the first channel of the image using tifffile.imread (e.g., DAPI is often the first channel thus 'key = 0')
         img = imread(os.path.join(dir_img, filename), key=0)
-        # Normalize the images: can be modified to segment noisy images
+        # Normalize the images. pmin=0.2 (vs. 1 used in training) is deliberate:
+        # darker images oversegment the background at pmin=1. Can be modified
+        # to segment noisy images.
         img = normalize(img, 0.2, 99.8)
 
         # Segmentation

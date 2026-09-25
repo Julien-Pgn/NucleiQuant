@@ -12,6 +12,12 @@
 #   logs                     follow logs from the jupyter daemon
 #   build                    build the image
 #   help                     show this message
+#
+# Only the repo folder is mounted into the container by default (as /workspace),
+# so an --images path has to live somewhere under the repo. To segment images
+# that live elsewhere on your machine instead, set IMAGES_DIR and use /data:
+#   IMAGES_DIR=/home/jul/Téléchargements/my_images ./run_container.sh exec \
+#       python scripts/01_segmentation.py --images /data
 
 set -euo pipefail
 
@@ -19,15 +25,26 @@ IMAGE="nucleiquant:dev"
 
 # Common flags for every mode. GPU access is added per-mode below, not here,
 # so CPU-only runs never need the NVIDIA Container Toolkit at all.
+# --user + HOME: the container image runs as root by default, which would make
+# every output file (labels, ROIs, notebook saves) root-owned on the host.
+# Running as your own uid/gid instead means files land owned by you, as normal.
 COMMON_FLAGS=(
     --ipc=host
     --ulimit memlock=-1
     --ulimit stack=67108864
     --shm-size=8g
+    --user "$(id -u):$(id -g)"
+    -e "HOME=/tmp"
     -v "$(pwd):/workspace"
     -e "PYTHONDONTWRITEBYTECODE=1"
     -w /workspace
 )
+
+# Optional: mount a folder from anywhere on your machine at /data, for images
+# that don't live inside the repo (see IMAGES_DIR usage note above).
+if [ -n "${IMAGES_DIR:-}" ]; then
+    COMMON_FLAGS+=(-v "${IMAGES_DIR}:/data")
+fi
 
 mode="${1:-shell}"
 

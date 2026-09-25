@@ -44,7 +44,7 @@ provided. It works the same whether your computer has an NVIDIA GPU or not.
 ./run_container.sh build              # once
 ./run_container.sh jupyter            # notebooks, with GPU -> http://localhost:8888
 ./run_container.sh jupyter_cpu        # notebooks, no GPU needed
-./run_container.sh exec python scripts/01_segmentation.py   # run a script directly
+./run_container.sh exec python scripts/01_segmentation.py --images path/to/your/images
 ./run_container.sh stop               # stop the Jupyter server
 ```
 
@@ -86,13 +86,10 @@ After selection, copy and paste the representative images into another folder an
 
 ### Preparing data for Ilastik
 
-Since Ilastik handles `.h5` masks more efficiently than TIFF label files, it is recommended to convert:
-- All segmentation masks from the cropped images
-- All segmentation masks from the full dataset
-
-to **HDF5 (.h5)** format.
-
-Conversion scripts are provided for this step.
+Ilastik handles `.h5` masks more efficiently than TIFF label files, so both formats are saved
+automatically — pick whichever you prefer, no separate conversion step needed:
+- Full-dataset masks: written as both `.tif` and `.h5` by `segmentation.py`, in `lbl/`.
+- Cropped masks: written as both `.tif` and `.h5` by the image-selection notebook, in `crops/masks/`.
 
 ### Object classification in Ilastik
 
