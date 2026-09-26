@@ -28,3 +28,10 @@ venv/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# NucleiQuant V2 projects (created next to the images) and app state
+**/NucleiQuant_projects/
+.nucleiquant/
+
+# UI walkthrough artefacts
+tests/e2e/output/

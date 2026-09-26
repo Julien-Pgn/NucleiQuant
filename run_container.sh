@@ -8,7 +8,10 @@
 #   exec_cpu <cmd> [args...]   same, without GPU
 #   jupyter                 start JupyterLab on http://localhost:8888 (detached, GPU)
 #   jupyter_cpu              same, without GPU
-#   stop                     stop and remove the jupyter daemon
+#   app                      start the NucleiQuant app on http://localhost:8765 (GPU)
+#   app_cpu                  same, without GPU
+#   test                     run the test suite (pytest)
+#   stop                     stop and remove the jupyter daemon and the app
 #   logs                     follow logs from the jupyter daemon
 #   build                    build the image
 #   help                     show this message
@@ -21,7 +24,7 @@
 
 set -euo pipefail
 
-IMAGE="nucleiquant:dev"
+IMAGE="nucleiquant:v2"
 
 # Common flags for every mode. GPU access is added per-mode below, not here,
 # so CPU-only runs never need the NVIDIA Container Toolkit at all.
@@ -107,10 +110,34 @@ case "$mode" in
         echo "Logs with:  ./run_container.sh logs"
         ;;
 
+    # "app" starts the V2 app. Most users should double-click start-nucleiquant.sh
+    # instead, which also opens the browser and gives the app access to your home folder.
+    app|app_cpu)
+        docker rm -f nucleiquant-app >/dev/null 2>&1 || true
+        gpu=(); [ "$mode" = "app" ] && gpu=(--gpus all)
+        docker run -d --rm --name nucleiquant-app \
+            ${gpu[@]+"${gpu[@]}"} \
+            "${COMMON_FLAGS[@]}" \
+            -e NQ_STATE_DIR=/workspace/.nucleiquant \
+            -e NUMBA_CACHE_DIR=/workspace/.nucleiquant/numba_cache \
+            -p 127.0.0.1:8765:8765 \
+            "$IMAGE" \
+            python -m nucleiquant serve --host 0.0.0.0 --port 8765
+        echo "NucleiQuant: http://localhost:8765"
+        echo "Stop with:   ./run_container.sh stop"
+        ;;
+
+    test)
+        docker run --rm "${COMMON_FLAGS[@]}" -e NUMBA_CACHE_DIR=/tmp/numba_cache "$IMAGE" python -m pytest -q
+        ;;
+
     stop)
         docker rm -f nucleiquant-jupyter >/dev/null 2>&1 \
             && echo "Stopped nucleiquant-jupyter" \
             || echo "nucleiquant-jupyter was not running"
+        docker rm -f nucleiquant-app >/dev/null 2>&1 \
+            && echo "Stopped nucleiquant-app" \
+            || echo "nucleiquant-app was not running"
         ;;
 
     logs)
@@ -122,7 +149,7 @@ case "$mode" in
         ;;
 
     help|-h|--help)
-        sed -n '2,15p' "$0"
+        sed -n '2,18p' "$0"
         ;;
 
     *)

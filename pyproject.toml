@@ -1,7 +1,7 @@
 [project]
 name = "nucleiquant"
-version = "0.1.0"
-description = "Organoid nuclei segmentation and cell-type quantification pipeline."
+version = "2.0.0"
+description = "Count cell types in fluorescence images: StarDist nuclei segmentation, click-to-train random forest classification, Excel counts and statistics."
 readme = "Readme.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -37,7 +37,23 @@ dependencies = [
     "matplotlib>=3.8",
     "seaborn>=0.13",
     "plotly>=5.20",
+
+    # V2 app: features, classifier, ROIs, web interface.
+    # scikit-learn and numba are the container's own versions (pinned so a
+    # saved classifier and the numba kernels behave the same everywhere).
+    "scikit-learn==1.5.2",
+    "numba==0.59.1",
+    "roifile==2026.2.10",
+    "fastapi==0.141.1",
+    "uvicorn==0.54.0",
+    "markdown>=3.5",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
+[project.scripts]
+nucleiquant = "nucleiquant.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -45,3 +61,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nucleiquant"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

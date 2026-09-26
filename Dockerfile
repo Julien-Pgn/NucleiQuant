@@ -19,6 +19,12 @@ LABEL maintainer="Julien Pigeon"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# numba compiles the feature kernels once; the launcher points this at a
+# persistent folder on the host so it only happens on first use
+ENV NUMBA_CACHE_DIR=/tmp/numba_cache
+ENV TF_CPP_MIN_LOG_LEVEL=2
+# oneDNN makes CPU-only segmentation ~350x slower in this TensorFlow build
+ENV TF_ENABLE_ONEDNN_OPTS=0
 
 # libgl1, libglib2.0-0 -> runtime deps for scikit-image / opencv-style image I/O
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -40,8 +46,8 @@ COPY nucleiquant /workspace/nucleiquant
 # --break-system-packages : allow overwriting NGC's preinstalled packages where pinned
 # -e .                    : editable install, so `import nucleiquant` works against
 #                            the live, mounted copy of the package too
-RUN uv pip install --system --break-system-packages --no-cache-dir -e .
+RUN uv pip install --system --break-system-packages --no-cache-dir -e ".[dev]"
 
-EXPOSE 8888
+EXPOSE 8888 8765
 
 CMD ["/bin/bash"]
