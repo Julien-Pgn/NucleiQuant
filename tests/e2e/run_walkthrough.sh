@@ -17,7 +17,12 @@ pw() {
         -v "$PWD:/workspace" -w /workspace "$PW_IMAGE" python tests/e2e/ui_walkthrough.py --part "$1"
 }
 pw 1
-# Realistic labels from V1's ilastik predictions (55 per category), through the app's API
+# Realistic labels from V1's ilastik predictions (12 per category per crop), through the app's API
 docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" -w /workspace \
-    nucleiquant:v2 python scripts/validation/seed_labels_from_v1.py --url "$URL" --per-category 55 2>&1 | grep -E "Seeded|Error|Traceback" || true
+    nucleiquant:v2 python scripts/validation/seed_labels_from_v1.py --url "$URL" --per-crop 12 2>&1 | grep -E "Seeded|Error|Traceback" || true
 pw 2
+pw 3
+# Test labels (5 per category per test crop), again from V1, through the app's API
+docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" -w /workspace \
+    nucleiquant:v2 python scripts/validation/seed_labels_from_v1.py --url "$URL" --test --per-crop 5 2>&1 | grep -E "Seeded|Error|Traceback" || true
+pw 4

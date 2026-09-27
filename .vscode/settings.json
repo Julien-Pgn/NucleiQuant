@@ -1,0 +1,13 @@
+{
+  // NucleiQuant listens on port 8765. When VS Code is connected to this computer over
+  // SSH (Remote-SSH), forward that port automatically and open the browser once.
+  // For a forward that is always on (VS Code or plain ssh), see Readme.md › "From another computer".
+  "remote.autoForwardPorts": true,
+  "remote.autoForwardPortsSource": "hybrid",
+  "remote.portsAttributes": {
+    "8765": {
+      "label": "NucleiQuant",
+      "onAutoForward": "openBrowserOnce"
+    }
+  }
+}

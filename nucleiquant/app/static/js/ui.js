@@ -208,15 +208,31 @@ export function pickFolder({ title, text, mode = "images", start = null }) {
 }
 
 // ---- colour palette popover -----------------------------------------------------
-export function colorPopover(anchor, colors, onPick) {
+// `choices`: a list of colours, or sections [{ title, items: [{ color, label }] }].
+export function colorPopover(anchor, choices, onPick) {
   document.querySelectorAll(".palette").forEach((p) => p.remove());
   const rect = anchor.getBoundingClientRect();
-  const pal = h("div", { class: "palette", style: { left: `${rect.left}px`, top: `${rect.bottom + 6}px`, position: "fixed" } });
-  for (const c of colors) pal.append(h("button", { type: "button", style: { background: c }, "aria-label": c, onclick: () => { onPick(c); pal.remove(); } }));
+  const sections = typeof choices[0] === "string" ? [{ title: null, items: choices.map((c) => ({ color: c })) }] : choices;
+  const pal = h("div", { class: "palette", role: "dialog", "aria-label": "Choose a colour" });
+  const pick = (c) => { onPick(c); pal.remove(); };
+  for (const s of sections) {
+    if (s.title) pal.append(h("div", { class: "palette-title" }, s.title));
+    const row = h("div", { class: "palette-row" });
+    for (const it of s.items) {
+      const b = h("button", { type: "button", class: it.label ? "labeled" : "", title: it.label || it.color, "aria-label": it.label ? `${it.label} (${it.color})` : it.color, onclick: () => pick(it.color) },
+        h("span", { class: "chip-color", style: { background: it.color } }), it.label ? h("span", {}, it.label) : null);
+      row.append(b);
+    }
+    pal.append(row);
+  }
   const custom = h("input", { type: "color", "aria-label": "Custom colour" });
-  custom.addEventListener("change", () => { onPick(custom.value.toUpperCase()); pal.remove(); });
-  pal.append(custom);
+  custom.addEventListener("change", () => pick(custom.value.toUpperCase()));
+  pal.append(h("label", { class: "palette-custom" }, custom, "Custom colour…"));
   document.body.append(pal);
+  // Keep the popover on screen
+  const w = pal.offsetWidth, hgt = pal.offsetHeight;
+  pal.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))}px`;
+  pal.style.top = `${rect.bottom + 6 + hgt > window.innerHeight ? Math.max(8, rect.top - hgt - 6) : rect.bottom + 6}px`;
   setTimeout(() => document.addEventListener("mousedown", function off(e) {
     if (!pal.contains(e.target)) { pal.remove(); document.removeEventListener("mousedown", off); }
   }), 0);

@@ -4,7 +4,7 @@ Used by the automated UI walkthrough (tests/e2e) to get realistic labels
 without clicking thousands of times. Talks to the app over HTTP, so the
 app's own label logic is used.
 
-    python scripts/validation/seed_labels_from_v1.py --url http://localhost:8765 --per-category 55
+    python scripts/validation/seed_labels_from_v1.py --url http://localhost:8765 --per-crop 12
 """
 
 import argparse
@@ -32,33 +32,33 @@ def call(url, path, body=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8765")
-    ap.add_argument("--per-category", type=int, default=55)
+    ap.add_argument("--per-crop", type=int, default=12, help="labels per category in each crop")
+    ap.add_argument("--test", action="store_true", help="label the test crops instead of the training crops")
     args = ap.parse_args()
     st = call(args.url, "/api/state")
     p = st["project"]
     images_dir = os.path.normpath(os.path.join(p["dir"], "..", ".."))
     cat_id = {c["name"]: c["id"] for c in p["categories"]}
     pools = {}
-    for c in p["crops"]:
+    for c in (p["test_crops"] if args.test else p["crops"]):
         v1 = load_v1(images_dir, c["image"])
         if v1 is None:
             continue
         v1c = v1[c["y"]:c["y"] + c["h"], c["x"]:c["x"] + c["w"]]
-        labels = io.read_labels(os.path.join(p["dir"], "training", "labels", c["id"] + "_labels"))
+        labels = io.read_labels(os.path.join(p["dir"], "test" if args.test else "training", "labels", c["id"] + "_labels"))
         cls = v1_class_per_label(v1c, labels)
         obj = call(args.url, f"/api/crops/{c['id']}/objects")
         for lab, edge in zip(obj["labels"], obj["edge"]):
             k = int(cls[lab]) if lab < len(cls) else 0
             if not edge and k in V1_CLASSES and V1_CLASSES[k] in cat_id:
-                pools.setdefault(V1_CLASSES[k], []).append((c["id"], lab))
+                pools.setdefault((c["id"], V1_CLASSES[k]), []).append(lab)
     rng = np.random.default_rng(1)
     n = 0
-    for name, items in pools.items():
-        for i in rng.permutation(len(items))[: args.per_category]:
-            crop_id, lab = items[i]
-            call(args.url, "/api/labels", {"crop_id": crop_id, "label": int(lab), "category_id": cat_id[name]})
+    for (crop_id, name), items in sorted(pools.items()):
+        for i in rng.permutation(len(items))[: args.per_crop]:
+            call(args.url, "/api/labels", {"crop_id": crop_id, "label": int(items[i]), "category_id": cat_id[name]})
             n += 1
-    print(f"Seeded {n} labels:", call(args.url, "/api/state")["labels"]["per_category"])
+    print(f"Seeded {n} {'test ' if args.test else ''}labels:", call(args.url, "/api/state")["test_labels" if args.test else "labels"]["per_category"])
 
 
 if __name__ == "__main__":

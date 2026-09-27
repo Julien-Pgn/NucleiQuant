@@ -7,6 +7,7 @@ import * as survey from "./screens/survey.js";
 import * as crops from "./screens/crops.js";
 import * as label from "./screens/label.js";
 import * as results from "./screens/results.js";
+import * as testScreen from "./screens/test.js";
 
 const app = document.getElementById("app");
 
@@ -18,6 +19,7 @@ const STEPS = [
   { key: "crops", title: "Crops", screen: crops },
   { key: "label", title: "Label", screen: label },
   { key: "preview", title: "Preview", screen: label },
+  { key: "test", title: "Test", screen: testScreen },
   { key: "results", title: "Results", screen: results },
 ];
 
@@ -45,18 +47,20 @@ export function stepInfo(state) {
     crops: !imported && s.survey,
     label: !imported && s.crops,
     preview: !imported && trained && s.crops,
+    test: !imported && trained && s.crops,
     results: (p.classifier.validated && trained) || p.batch.done,
   };
   const meta = {
     project: `${state.files.n} images`,
     survey: p.survey_done ? `${p.selection.length} picked` : "",
     crops: p.crops.length ? `${p.crops.filter((c) => c.status === "ready").length} / ${p.crops.length}` : "",
-    label: state.labels.total ? (!state.labels.ready ? `${state.labels.needed || ""} to go`.trim() : `${state.labels.total} labels`) : "",
+    label: state.labels.total ? (state.labels.complete ? `${state.labels.total} labels` : `${state.labels.needed} to go`) : "",
     preview: trained && state.classifier.cross_validation.accuracy != null ? `${Math.round(state.classifier.cross_validation.accuracy * 100)}%` : "",
+    test: state.test ? `${Math.round(state.test.balanced_accuracy * 100)}%${state.test.stale ? " ·old" : ""}` : (trained ? "optional" : ""),
     results: p.batch.done ? "ready" : "",
   };
   if (imported) {
-    for (const k of ["survey", "crops", "label", "preview"]) meta[k] = "reused";
+    for (const k of ["survey", "crops", "label", "preview", "test"]) meta[k] = "reused";
   }
   return { available, meta, done: s, imported };
 }
@@ -120,7 +124,7 @@ function renderSidebar() {
 }
 
 function jobRoute(job) {
-  const r = { survey: "survey", crops: "crops", crop: "crops", train: "preview", batch: "results" }[job.kind];
+  const r = { survey: "survey", crops: "crops", crop: "crops", train: "preview", test: "test", batch: "results" }[job.kind];
   if (r) navigate(r);
 }
 

@@ -81,9 +81,17 @@ def part1(page):
     expect(page.get_by_role("heading", name="Label cells")).to_be_visible()
     for name in ("S", "N", "T"):
         page.get_by_role("button", name="Add", exact=True).click()
-        page.get_by_placeholder("Category name, e.g. SATB2+").fill(name)
-        page.get_by_placeholder("Category name, e.g. SATB2+").press("Enter")
+        if name == "S":
+            # Pick the category colour from the channel colours (S is seen in the 488 channel)
+            page.get_by_role("button", name="Choose a colour").click()
+            page.wait_for_timeout(300)
+            shot(page, "05c-colour-picker")
+            page.get_by_role("button", name="488 (#40FF73)").click()
+        page.get_by_placeholder("Category name, e.g. PAX6+").fill(name)
+        page.get_by_placeholder("Category name, e.g. PAX6+").press("Enter")
         page.wait_for_timeout(400)
+    colours = page.evaluate("() => fetch('/api/state').then(r => r.json()).then(s => s.project.categories.map(c => [c.name, c.color]))")
+    assert ["S", "#40FF73"] in colours, colours
     shot(page, "05a-label-empty")
 
 
@@ -166,14 +174,59 @@ def part2(page):
     page.wait_for_timeout(15000)
     shot(page, "07-running")
     expect(page.get_by_role("link", name="Download Excel")).to_be_visible(timeout=1200000)
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(2000)
     shot(page, "08-results")
+    # 100 % = stained cells, then a custom 100 % (S + N) saved in the Excel file
+    page.get_by_role("button", name="Stained cells").click()
+    page.wait_for_timeout(1500)
+    expect(page.get_by_text("100 % = stained cells")).to_be_visible()
+    shot(page, "08b-results-stained")
+    page.get_by_title("Leave T out of the 100 %").click()
+    page.wait_for_timeout(1500)
+    expect(page.get_by_text("100 % = S + N")).to_be_visible()
+    page.get_by_role("button", name="Save in Excel").click()
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(page.get_by_text("In the Excel file")).to_be_visible(timeout=60000)
+    shot(page, "08c-results-custom")
+    refs = page.evaluate("() => fetch('/api/results').then(r => r.json()).then(r => r.references.map(x => x.name))")
+    assert "S + N" in refs, refs
     page.get_by_role("link", name="View").first.click()
     expect(page.get_by_role("link", name="Back to results")).to_be_visible()
     page.wait_for_timeout(6000)
     shot(page, "09-image-view")
+
+
+def part3(page):
+    """Test step: create the test crops (labels are seeded next)."""
+    page.goto(BASE + "/#/test")
+    expect(page.get_by_role("heading", name="Test set")).to_be_visible()
+    page.wait_for_timeout(800)
+    shot(page, "10b-test-intro")
+    page.get_by_role("button", name="Create test crops").click()
+    expect(page.get_by_role("button", name="Evaluate accuracy")).to_be_visible(timeout=300000)
+    expect(page.get_by_text("Test crop 1 of")).to_be_visible(timeout=60000)
+    page.wait_for_timeout(1000)
+    # Blind: the prediction legend is never shown in test mode
+    assert page.locator(".legend-item:visible").count() == 0
+
+
+def part4(page):
+    """Evaluate the seeded test labels and check the report."""
+    page.goto(BASE + "/#/test")
+    expect(page.get_by_role("button", name="Evaluate accuracy")).to_be_visible()
+    page.wait_for_timeout(2500)
+    shot(page, "10c-test-labels")
+    page.get_by_role("button", name="Evaluate accuracy").click()
+    if page.get_by_role("button", name="Evaluate anyway").count():
+        page.get_by_role("button", name="Evaluate anyway").click()
+    expect(page.get_by_role("heading", name="Test accuracy")).to_be_visible(timeout=120000)
+    expect(page.get_by_text("Balanced accuracy").first).to_be_visible()
+    page.wait_for_timeout(800)
+    shot(page, "11-test-report")
     page.goto(BASE + "/#/results")
+    expect(page.get_by_text("Test accuracy").first).to_be_visible(timeout=30000)
     page.wait_for_timeout(1500)
+    shot(page, "08-results")
     page.get_by_role("button", name="Help").click()
     page.wait_for_timeout(1500)
     shot(page, "10-help")
@@ -186,7 +239,7 @@ def main():
     with sync_playwright() as pw:
         browser, page = new_page(pw)
         try:
-            (part1 if args.part == 1 else part2)(page)
+            {1: part1, 2: part2, 3: part3, 4: part4}[args.part](page)
         except Exception:
             shot(page, f"failure-part{args.part}")
             raise

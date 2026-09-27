@@ -2,6 +2,8 @@
 
 Guide for coding agents (Claude Code, Codex, Cursor, Gemini CLI…) and developers who
 modify this project. Users of the app should read `Readme.md` and `docs/user_guide.md`.
+**`PROJECT.md` is the decision log** (what was asked, what was built, why, known weaknesses,
+version by version): read it before changing behaviour, and add an entry for every change set.
 
 ## What the project is
 
@@ -20,11 +22,22 @@ The workflow, one screen per step:
 3. **Crops**: a window per training image (auto-placed on marker-positive tissue,
    draggable), segmented with `stardist_haug2` using the full image's normalisation range.
 4. **Label**: the user clicks nuclei into categories. `Dead` and `Unstained` always exist;
-   the user adds the others. ≥ `label_target` (50) labels per used category.
+   the user adds the others and picks their colours (channel colours offered first).
+   Recommended: `labels_per_crop` (10) labels of each category in **each crop**, so dim,
+   typical and bright images weigh the same. Not enforced: the only hard requirement is two
+   labeled categories; a dialog lists shortfalls and lets the user continue
+   (`api.label_progress`).
 5. **Preview**: random forest trained on the labels, tested leave-one-crop-out, every crop
    recoloured by prediction; the user corrects and retrains, then validates.
-6. **Results**: every image segmented, measured, classified; Excel workbook, plots,
-   Mann-Whitney / Kruskal-Wallis + Dunn statistics (organoid = unit), Fiji ROIs.
+6. **Test** (optional, for papers): `test_images_per_clone` (2) random images per clone that
+   were *not* used for training get a smaller crop (`test_crop_fraction` 0.35); the user
+   labels `test_labels_per_crop` (5) cells per category per crop **blind** (no predictions
+   shown); `evaluate_test()` reports balanced accuracy, accuracy, Cohen's κ with 95 % CIs,
+   per category and per image, and a methods paragraph. Every evaluation is logged.
+7. **Results**: every image segmented, measured, classified; Excel workbook, plots,
+   Mann-Whitney / Kruskal-Wallis + Dunn statistics (organoid = unit), Fiji ROIs. Proportions
+   are relative to a user-chosen **reference** ("100 %"): all nuclei, living cells, stained
+   cells or any saved set of categories; interactive vertical stacked bars on screen.
 
 Audience: biologists, not programmers. Everything must be doable from the GUI.
 
@@ -54,7 +67,8 @@ nucleiquant/
   app/static/      Frontend: plain ES modules + CSS, no build step, no npm.
     js/main.js       router (#/project, #/survey, …), sidebar, help drawer, quit
     js/viewer.js     canvas viewer: 16-bit composite in the browser, vector outlines, pan/zoom, hit-test
-    js/screens/*.js  one module per screen (label.js serves Label and Preview)
+    js/screens/*.js  one module per screen (label.js serves Label, Preview and blind Test labeling;
+                     test.js: test intro/progress/report)
     css/app.css      design tokens (dark theme, accent #F2C94C = ImageJ ROI yellow), components
     fonts/           Geist + Geist Mono (OFL), bundled so the app works offline
   __main__.py      CLI: `serve`, `batch`
@@ -67,8 +81,9 @@ nucleiquant/
   features.py      ~300 features per nucleus (numba kernels) — see "Features"
   contours.py      outline polygons (numba Moore tracing) for viewer and ROIs
   classifier.py    RandomForest (sklearn), leave-one-crop-out CV, save/load
+  evaluation.py    independent test set metrics: Wilson / bootstrap 95 % CIs, methods text
   batch.py         per-image pipeline (resumable), objects CSV, ROIs, overlays, summaries
-  quantify.py      tables, proportions, Excel workbook, plots
+  quantify.py      references (100 %), tables, proportions, results_view (chart data), Excel, plots
   stats.py         Mann-Whitney, Kruskal-Wallis, Dunn, Holm
   rois.py          Fiji ROI sets named/coloured by category (roifile, deflate zip)
   render.py        colour composites for thumbnails/overlays
@@ -93,6 +108,9 @@ Input images are never modified. A project lives in
 | `training/annotations.csv` | user labels: `crop_id,label,category` — the source of truth for training |
 | `training/cache/` | per-crop features (`.pkl`), outlines (`.npz`), thumbnails — regenerable |
 | `classifier/` | `model.joblib`, `classifier.json` (metrics, top features, hash), `training_set.csv.gz` |
+| `test/crops/`, `test/labels/`, `test/cache/` | test crops (same layout as `training/`) |
+| `test/annotations.csv` | blind test labels — **never** read by training |
+| `test/report.json`, `test/history.json` | last evaluation (metrics, per crop, methods text) and every evaluation (append-only) |
 | `results/labels/` | full-image segmentations + `_labels.json` (segmentation key: reused if unchanged) |
 | `results/objects/<image>_objects.csv` | one row per nucleus: centroid, area, category, probabilities, mean per channel |
 | `results/rois/`, `results/overlays/` | Fiji ROI sets, QC JPEGs |
@@ -102,6 +120,36 @@ Input images are never modified. A project lives in
 
 App-wide state (recent projects, numba cache) goes to `$NQ_STATE_DIR` (default
 `~/.nucleiquant`).
+
+## Proportions and references ("100 %")
+
+A reference is a set of category ids whose total is 100 %. `quantify.PRESETS`: `all`
+(every category), `living` (all but `dead`), `stained` (all but `dead` and `unstained`; only
+when the user has own categories). Custom references are saved by the user from the Results
+screen in `project.json → references: [{id, name, categories}]`. For every reference, the
+Excel `proportions` sheet has `Cells (<name>)` and `<Category> (% <name>)` columns, the
+`statistics` sheet has rows with `Measure = "% of <name>"`, and `results/plots/` has
+`proportions_<name>.png/svg` (+ `groups_<name>` with ≥ 2 groups). The Results chart calls
+`POST /api/results/view {categories}` → `quantify.results_view()` (bars per unit, group
+means ± SD, statistics for that reference), computed from `results/summaries/*.json`, so
+changing the 100 % never reclassifies anything. Holm correction is applied within one
+reference, not across references.
+
+## Independent test set (Test step)
+
+Why: leave-one-crop-out accuracy (Preview) is measured on training crops; reviewers want
+accuracy on images never used for training, labeled blind. Design choices and reasons:
+test images are drawn **at random** per clone among images not in `selection`/`crops`
+(`survey.pick_test_images`, seed 0 → reproducible) so the test represents the experiment;
+crops are smaller (few cells needed); labels are stratified per category, so **balanced
+accuracy** (mean recall) is the headline; accuracy and recall/precision get Wilson CIs,
+balanced accuracy and κ bootstrap CIs over cells (cells within an image are correlated →
+CIs are slightly optimistic; documented). Test crops live in `project.json → test_crops`
+(ids `testNN`); `Project.crop()` and `is_test_crop()` cover both lists; `set_label()` routes
+test crops to `test_annotations` and never marks the classifier stale. Sub-crops of
+training images were rejected (leakage); a second annotation of the same cells measures
+annotator consistency, not the classifier (possible future feature). If the classifier
+changes, the report is marked `stale` and re-evaluation appends to the history.
 
 ## Features (features.py)
 
@@ -150,6 +198,14 @@ equals scikit-image's regionprops.
   this TensorFlow build runs StarDist ~350x slower on CPU (173 s vs 0.5 s for 1024x1024).
   With it off, CPU-only segmentation of a 3156x3141 image takes 8 s and gives the same nuclei.
 - Statistics use the organoid (or image when there is no organoid field) as the unit, never cells.
+- **Test labels never enter training**: `training_table()` reads only `project.data["crops"]`
+  and `self.annotations`. Keep it that way; keep `test/history.json` append-only.
+- **Labeling recommendations are advice, not gates**: `labels_per_crop` never blocks the user;
+  `label_progress()["ready"]` (≥ 2 labeled categories) is the only hard requirement.
+- Category colours are free (the user may pick a channel's colour on purpose); keep the dark
+  halo under outlines so any colour stays readable.
+- **Don't commit, tag or push**: the user does all git operations. Log every change set in
+  `PROJECT.md` (why, what, weaknesses) and update this file and the user docs.
 
 ## How to extend (recipes)
 
@@ -216,16 +272,25 @@ a project `mode` flag; categories become markers; `annotations.csv` gains a mark
   `img_test_pipeline/` is absent.
 - `scripts/validation/compare_with_v1.py`: whole pipeline on `img_test_pipeline/` with labels
   sampled from V1's ilastik predictions; reports per-nucleus agreement and Cohen's κ with V1
-  (2026-09-25: 93.6 % per-nucleus agreement, κ = 0.89, leave-one-crop-out accuracy 93.6 %,
-  12 images in 158 s on an RTX 5070 Ti).
+  (2026-09-26, V2.1 protocol = 18 labels per category per crop: 93.7 % per-nucleus agreement,
+  κ = 0.89, leave-one-crop-out accuracy 90.7 %; V2.0 protocol `--per-category 55`: 93.6 %,
+  κ = 0.89, 93.6 %. See PROJECT.md for why the held-out accuracy differs).
 - `tests/e2e/run_walkthrough.sh`: real browser (Playwright container) clicks through all six
-  steps and regenerates the documentation screenshots.
+  steps (incl. picking a category colour, per-crop labeling, the shortfall dialog, switching
+  the 100 % and saving one in Excel) and regenerates the documentation screenshots.
+- `tests/test_evaluation.py`: Wilson intervals, metrics, test-image selection.
+- `tests/e2e/check_modules.py`: imports every frontend module in Chromium — a syntax check
+  without Node.js (run it after any JS edit; needs a running app).
 
 ## Environment notes
 
 - Base image `nvcr.io/nvidia/tensorflow:25.02-tf2-py3` (TF 2.17, CUDA 12.8; amd64 + arm64).
   Chosen because older TF builds hang on Blackwell GPUs; it reproduces the shipped model's
   label counts to within 3 nuclei out of 38,841.
+- Remote use: the app binds 127.0.0.1:8765 on the machine that runs it. `.vscode/settings.json`
+  makes VS Code Remote-SSH auto-forward 8765 and open the browser once; the permanent,
+  editor-independent way is `LocalForward 127.0.0.1:8765 127.0.0.1:8765` in the client's
+  `~/.ssh/config` (honoured by Remote-SSH). The launcher prints this when run over SSH.
 - Env vars: `NQ_ROOTS` (folders the picker may open, `:`-separated), `NQ_PATH_MAP`
   (`/container/prefix=Host\prefix;…`, Windows display), `NQ_HOME` (shown as `~`),
   `NQ_STATE_DIR`, `NQ_MODEL_DIR`, `NUMBA_CACHE_DIR`.

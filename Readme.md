@@ -44,6 +44,41 @@ To stop, click **Quit** in the app.
 > The Windows and Mac launchers are new: if one doesn't work on your computer, please
 > [open an issue](https://github.com/Julien-Pgn/NucleiQuant/issues) with what the window says.
 
+## From another computer (SSH)
+
+A common setup: NucleiQuant runs on a lab workstation with a GPU, and you work from your
+laptop over SSH (for example with VS Code Remote-SSH). The app then listens on the
+workstation, and `http://localhost:8765` on your laptop only works once port **8765** is
+forwarded from the workstation to the laptop. Set it up once:
+
+**Always on (recommended): one line in your SSH configuration.** On your laptop, open
+`~/.ssh/config` (in VS Code: *Remote-SSH: Open SSH Configuration File…*) and add the
+`LocalForward` line to the entry of the workstation:
+
+```
+Host lab-workstation
+    HostName 192.168.1.20        # the workstation's address
+    User your-name
+    LocalForward 127.0.0.1:8765 127.0.0.1:8765
+```
+
+From then on, every connection to the workstation — VS Code Remote-SSH or `ssh` in a
+terminal — forwards the port, and <http://localhost:8765> works on your laptop whenever
+NucleiQuant is running there. VS Code honours `LocalForward` lines
+([VS Code documentation](https://code.visualstudio.com/docs/remote/ssh)). If you open two
+SSH sessions at once, the second prints "Address already in use": harmless, the first one
+already forwards the port.
+
+**Automatic in VS Code.** When this folder is opened in VS Code over SSH and you start
+NucleiQuant from VS Code's terminal (`./start-nucleiquant.sh`), VS Code detects the link,
+forwards the port and opens your browser (settings in `.vscode/settings.json`). If it
+doesn't, use the line above, or VS Code's **PORTS** tab › *Forward a Port* › `8765`.
+
+**One-off, from a terminal on your laptop:** `ssh -N -L 8765:127.0.0.1:8765 your-name@workstation`
+(keep it open while you work).
+
+On the workstation itself, nothing is needed: <http://localhost:8765> just works.
+
 ## Your images
 
 - **TIFF files**, one per image, all channels in the same file (e.g. DAPI, 488, 555, 647).
@@ -59,16 +94,17 @@ To stop, click **Quit** in the app.
 NucleiQuant never changes your images. Results go into a `NucleiQuant_projects` folder
 inside your images folder.
 
-## How it works: six steps
+## How it works: seven steps (one optional)
 
 | | Step | What you do | Time |
 |---|---|---|---|
 | 1 | **Project** | Pick the images folder, name the channels, choose the nuclear channel, type each clone's genotype. | 1 min |
 | 2 | **Survey** | Every image is measured. Three training images per clone are picked for you — dim, typical and bright staining — so the classifier copes with staining variation. | seconds |
 | 3 | **Crops** | A region of each training image is cut and its nuclei are found. Drag a frame to move it. | 1 min |
-| 4 | **Label** | Create your categories (e.g. SATB2+, TBR1+). *Dead* and *Unstained* are always there. Click 50–60 nuclei per category, spread over all crops. | 15–30 min |
+| 4 | **Label** | Create your categories (e.g. PAX6+, BRN2+) and give each a colour — e.g. the colour of its channel. *Dead* and *Unstained* are always there. Click about **10 nuclei of each category in each crop** (recommended: if a crop has fewer, label what it has and move on). | 15–30 min |
 | 5 | **Preview** | Every nucleus is coloured by its predicted type, with the accuracy on crops the classifier didn't train on. Correct mistakes, retrain, validate. | 5 min |
-| 6 | **Results** | All images are classified. You get the Excel file, plots and statistics, and can inspect any image. | 15 s – 1 min per image |
+| 6 | **Test** *(optional, recommended for papers)* | A few images never used for training are drawn at random; you label about 5 cells of each category in a small crop of each, without seeing the classifier's answers. You get the accuracy with 95 % confidence intervals, per category and per image, and a methods paragraph. | 10–15 min |
+| 7 | **Results** | All images are classified. Choose what counts as 100 % (all nuclei, living cells, only stained cells, or any combination) and see the proportions as bar plots with statistics. Everything is in the Excel file, and you can inspect any image. | 15 s – 1 min per image |
 
 The full, illustrated walkthrough is in the **[user guide](docs/user_guide.md)** (also
 available from the **Help** button in the app).
@@ -81,12 +117,16 @@ In `<images>/NucleiQuant_projects/<project>/results/`:
 
 | File | Content |
 |---|---|
-| `<experiment>_counts.xlsx` | Counts per image, per organoid (slices added up), per organoid with ≥ 4 slices, proportions (% of all nuclei and % of living cells), statistics, classifier summary, settings |
+| `<experiment>_counts.xlsx` | Counts per image, per organoid (slices added up), per organoid with ≥ 4 slices, proportions as % of all nuclei, of living cells, of stained cells and of any 100 % you saved, statistics for each, classifier summary, settings |
 | `plots/` | Proportion plots (PNG and SVG, ready for figures) |
 | `objects/` | One table per image: every nucleus, its position, size, category and probabilities |
 | `rois/` | Fiji ROI sets, one polygon per nucleus, named and coloured by category (open in Fiji's ROI Manager) |
 | `labels/` | Nucleus label images (`.tif` and `.h5`) |
 | `overlays/` | A quick-look picture of each image with coloured outlines |
+
+**Proportions** are relative to a "100 %" you choose on the Results screen: all nuclei, living
+cells (all but Dead), stained cells (all but Dead and Unstained), or any set of categories
+you tick. Save a combination to add it to the Excel file and plots.
 
 **Statistics**: per organoid (never per cell), Mann-Whitney for two groups, Kruskal-Wallis
 then Dunn's test for more, Holm-corrected. The raw counts are in the Excel file for any
@@ -99,9 +139,15 @@ nuclei):
 
 - **Segmentation** reproduces the published model's output (38,840 vs 38,841 nuclei on one image).
 - **Measurements** are identical to ilastik's (mean intensities match to 0.0001).
-- **Classification**: trained on 55 cells per category, the classifier is right **93–95 %**
+- **Classification**: trained on about 55 cells per category, the classifier is right **91–95 %**
   of the time on a crop it never saw, and agrees with the published ilastik classification
   for **94 %** of nuclei (Cohen's κ = 0.89).
+
+**On your own data**, the **Test** step measures the accuracy that matters for a paper: on
+images that were not used for training, labeled blind to the classifier's answers. The
+report gives the balanced accuracy, accuracy and Cohen's κ with 95 % confidence intervals,
+per category and per image, and a ready-to-adapt methods paragraph; it is also in the Excel
+file (sheet `test_set`).
 
 Each nucleus is described by ~300 measurements (shape, intensity statistics in each channel,
 texture, the surrounding ring as in ilastik, the perinuclear region, channel correlations,
@@ -119,7 +165,7 @@ ilastik — learns your categories from them.
 | "names don't match the pattern" | Click **Edit pattern** on the Project screen and describe your file names. |
 | Browser shows "can't reach" | NucleiQuant was stopped: start it again. The project reopens where you left it. |
 | The Mac says the file can't be opened | Right-click `Start NucleiQuant.command` › Open › Open (only the first time). |
-| NucleiQuant runs on another computer (e.g. a lab GPU workstation you reach over SSH) | The link only works on that computer. Forward port 8765 to yours: in VS Code, **PORTS** tab › Forward a Port › `8765`; or in a terminal on your computer, `ssh -N -L 8765:127.0.0.1:8765 you@workstation`. Then open <http://localhost:8765>. |
+| The link doesn't open when NucleiQuant runs on another computer (SSH) | Forward port 8765: see [From another computer (SSH)](#from-another-computer-ssh). |
 
 ## Limits
 

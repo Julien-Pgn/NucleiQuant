@@ -206,6 +206,19 @@ def create_app():
     def import_classifier(path: str = Body(..., embed=True)):
         return session.import_classifier(path)
 
+    # ---- independent test set -----------------------------------------------------------
+    @app.post("/api/test/crops")
+    def test_crops():
+        return session.start_test_crops()
+
+    @app.post("/api/test/evaluate")
+    def test_evaluate():
+        return session.evaluate_test()
+
+    @app.get("/api/test/report")
+    def test_report():
+        return session.test_report()
+
     # ---- batch and results -------------------------------------------------------------
     @app.post("/api/batch")
     def start_batch():
@@ -218,6 +231,18 @@ def create_app():
     @app.post("/api/results/refresh")
     def refresh_results():
         return session.refresh_results()
+
+    @app.post("/api/results/view")
+    def results_view(categories: list = Body(..., embed=True)):
+        return session.results_view(categories)
+
+    @app.post("/api/results/references")
+    def save_reference(name: str = Body(""), categories: list = Body(...)):
+        return session.save_reference(name, categories)
+
+    @app.delete("/api/results/references/{ref_id}")
+    def delete_reference(ref_id: str):
+        return session.delete_reference(ref_id)
 
     @app.get("/api/results/excel")
     def excel():

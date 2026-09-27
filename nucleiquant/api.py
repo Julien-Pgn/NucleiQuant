@@ -6,6 +6,7 @@ contain pipeline logic of their own.
 """
 
 import csv
+import datetime
 import json
 import os
 import shutil
@@ -14,7 +15,7 @@ import threading
 import numpy as np
 import pandas as pd
 
-from . import batch, crops, features, io, metadata, quantify, segmentation, survey
+from . import batch, crops, evaluation, features, io, metadata, quantify, segmentation, survey
 from .classifier import Classifier
 from .project import CATEGORY_COLORS, CHANNEL_COLORS, Project, recent_projects
 
@@ -65,6 +66,32 @@ def _inside_roots(path):
     return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in _roots())
 
 
+def label_progress(category_ids, crop_ids, annotations, target):
+    """Labeling progress against the per-crop recommendation.
+
+    annotations: {(crop_id, label): category_id}. Every category should have `target`
+    labels in every crop (recommended, not required). Only two things are required to
+    train: at least two categories with labels.
+    """
+    per_cat = {c: 0 for c in category_ids}
+    per_crop = {k: {c: 0 for c in category_ids} for k in crop_ids}
+    for (crop_id, _), cat in annotations.items():
+        if cat in per_cat:
+            per_cat[cat] += 1
+            if crop_id in per_crop:
+                per_crop[crop_id][cat] += 1
+    used = [c for c, n in per_cat.items() if n > 0]
+    shortfalls = [{"crop_id": k, "category": c, "n": per_crop[k][c]}
+                  for k in crop_ids for c in category_ids if per_crop[k][c] < target]
+    needed_crop = {k: sum(max(0, target - per_crop[k][c]) for c in category_ids) for k in crop_ids}
+    return {
+        "per_category": per_cat, "per_crop": per_crop, "total": sum(per_cat.values()),
+        "target": target, "needed": sum(needed_crop.values()), "needed_per_crop": needed_crop,
+        "shortfalls": shortfalls, "unused": [c for c, n in per_cat.items() if n == 0],
+        "ready": len(used) >= 2, "complete": not shortfalls,
+    }
+
+
 class Session:
     """One open project plus the app's in-memory caches and background jobs."""
 
@@ -72,6 +99,7 @@ class Session:
         self.jobs = jobs
         self.project = None
         self.annotations = {}
+        self.test_annotations = {}
         self.classifier = None
         self.predictions = {}
         self._features = {}
@@ -168,6 +196,7 @@ class Session:
         with self.lock:
             self.project = project
             self.annotations = self._load_annotations()
+            self.test_annotations = self._load_annotations("test")
             self._features = {}
             self.predictions = {}
             self._survey = None
@@ -445,7 +474,7 @@ class Session:
     def crop_file(self, crop_id, kind):
         p = self._require()
         p.crop(crop_id)
-        return crops.crop_paths(p, crop_id)[kind]
+        return crops.crop_paths(p, crop_id, "test" if p.is_test_crop(crop_id) else "training")[kind]
 
     def crop_raw(self, crop_id):
         """(bytes, shape) of the crop as uint16 (C, Y, X)."""
@@ -512,6 +541,8 @@ class Session:
             p.data["categories"] = [c for c in p.categories if c["id"] != category_id]
             self.annotations = {k: v for k, v in self.annotations.items() if v != category_id}
             self._save_annotations()
+            self.test_annotations = {k: v for k, v in self.test_annotations.items() if v != category_id}
+            self._save_annotations("test")
             self._invalidate_training(p)
             p.save()
         return self.state()
@@ -526,45 +557,43 @@ class Session:
         if bool(df.loc[row[0], "touches_border"]):
             raise ApiError("This nucleus is cut by the crop edge and can't be labeled.")
         key = (crop_id, int(label))
+        if category_id is not None:
+            p.category(category_id)
         with self.lock:
-            if category_id is None:
-                self.annotations.pop(key, None)
+            if p.is_test_crop(crop_id):
+                # Test labels are kept apart: never used for training
+                if category_id is None:
+                    self.test_annotations.pop(key, None)
+                else:
+                    self.test_annotations[key] = category_id
+                self._save_annotations("test")
             else:
-                p.category(category_id)
-                self.annotations[key] = category_id
-            self._save_annotations()
-            if p.data["classifier"].get("trained") and not p.data["classifier"].get("stale"):
-                p.data["classifier"]["stale"] = True
-                p.data["classifier"]["validated"] = False
-                p.save()
-        return self.label_counts()
+                if category_id is None:
+                    self.annotations.pop(key, None)
+                else:
+                    self.annotations[key] = category_id
+                self._save_annotations()
+                if p.data["classifier"].get("trained") and not p.data["classifier"].get("stale"):
+                    p.data["classifier"]["stale"] = True
+                    p.data["classifier"]["validated"] = False
+                    p.save()
+        return {"labels": self.label_counts(), "test_labels": self.test_label_counts()}
 
     def labels_of_crop(self, crop_id):
-        return {str(lab): cat for (c, lab), cat in self.annotations.items() if c == crop_id}
+        store = self.test_annotations if self.project.is_test_crop(crop_id) else self.annotations
+        return {str(lab): cat for (c, lab), cat in store.items() if c == crop_id}
 
     def label_counts(self):
         p = self._require()
-        per_cat = {c["id"]: 0 for c in p.categories}
-        per_crop = {c["id"]: {k["id"]: 0 for k in p.categories} for c in p.data["crops"]}
-        for (crop_id, _), cat in self.annotations.items():
-            if cat in per_cat:
-                per_cat[cat] += 1
-                if crop_id in per_crop:
-                    per_crop[crop_id][cat] += 1
-        target = int(p.settings["label_target"])
-        used = [c for c, n in per_cat.items() if n > 0]
-        # Categories without any label are left out of training (the app warns about them)
-        needed = sum(max(0, target - per_cat[c]) for c in used)
-        ready = needed == 0 and len(used) >= 2
-        return {"per_category": per_cat, "per_crop": per_crop, "total": sum(per_cat.values()),
-                "target": target, "needed": needed, "ready": ready,
-                "unused": [c for c, n in per_cat.items() if n == 0]}
+        crops_ready = [c["id"] for c in p.data["crops"] if c.get("status") == "ready"]
+        return label_progress([c["id"] for c in p.categories], crops_ready, self.annotations,
+                              int(p.settings["labels_per_crop"]))
 
-    def _annotations_path(self):
-        return self.project.path("training", "annotations.csv")
+    def _annotations_path(self, folder="training"):
+        return self.project.path(folder, "annotations.csv")
 
-    def _load_annotations(self):
-        path = os.path.join(self.project.dir, "training", "annotations.csv")
+    def _load_annotations(self, folder="training"):
+        path = os.path.join(self.project.dir, folder, "annotations.csv")
         out = {}
         if os.path.exists(path):
             with open(path) as f:
@@ -572,15 +601,16 @@ class Session:
                     out[(row["crop_id"], int(row["label"]))] = row["category"]
         return out
 
-    def _save_annotations(self):
+    def _save_annotations(self, folder="training"):
         if self.project is None:
             return
-        path = self._annotations_path()
+        store = self.test_annotations if folder == "test" else self.annotations
+        path = self._annotations_path(folder)
         tmp = path + ".tmp"
         with open(tmp, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["crop_id", "label", "category"])
-            for (crop_id, label), cat in sorted(self.annotations.items()):
+            for (crop_id, label), cat in sorted(store.items()):
                 w.writerow([crop_id, label, cat])
         os.replace(tmp, path)
 
@@ -588,6 +618,115 @@ class Session:
         if p.data["classifier"].get("trained"):
             p.data["classifier"]["stale"] = True
             p.data["classifier"]["validated"] = False
+
+    # ---- independent test set ----------------------------------------------------------
+
+    def test_label_counts(self):
+        p = self._require()
+        ready = [c["id"] for c in p.data.get("test_crops", []) if c.get("status") == "ready"]
+        return label_progress([c["id"] for c in p.categories], ready, self.test_annotations,
+                              int(p.settings["test_labels_per_crop"]))
+
+    def start_test_crops(self):
+        p = self._require()
+        return self.jobs.submit("test", "Creating test crops", self._run_test_crops, p)
+
+    def _run_test_crops(self, job, p):
+        s = p.settings
+        with p.lock:
+            if not p.data.get("test_crops"):
+                names = [i["image"] for i in self.files() if "fields" in i]
+                training = {c["image"] for c in p.data["crops"]} | {x["image"] for x in p.data["selection"]}
+                picks = survey.pick_test_images(names, training, self._group_of, int(s["test_images_per_clone"]))
+                if not picks:
+                    raise ApiError("No images left for testing: every image is used for training.")
+                p.data["test_crops"] = [{"id": f"test{k + 1:02d}", "image": im, "role": "Test", "status": "queued"}
+                                        for k, im in enumerate(picks)]
+                p.save()
+        todo = [c for c in p.data["test_crops"] if c.get("status") != "ready"]
+        for k, c in enumerate(todo):
+            if c.get("status") == "stale":
+                self.test_annotations = {key: v for key, v in self.test_annotations.items() if key[0] != c["id"]}
+                self._save_annotations("test")
+            c["status"] = "running"
+
+            def prog(msg, frac, k=k, c=c):
+                job.update((k + frac) / len(todo), f"{c['image']}: {msg}")
+
+            crops.build_crop(p, c, self._survey_entry(c["image"]), prog, folder="test",
+                             fraction=float(s["test_crop_fraction"]))
+            self._features.pop(c["id"], None)
+            with p.lock:
+                p.save()
+        return {"n": len(p.data["test_crops"])}
+
+    def evaluate_test(self):
+        """Accuracy of the current classifier on the labeled test cells (logged every time)."""
+        p = self._require()
+        if self.classifier is None:
+            raise ApiError("Train the classifier first (Preview).")
+        y_true, y_pred, per_crop = [], [], []
+        for c in p.data.get("test_crops", []):
+            labs = {lab: cat for (cid, lab), cat in self.test_annotations.items() if cid == c["id"]}
+            if c.get("status") != "ready" or not labs:
+                continue
+            df = self._crop_features(c["id"])
+            sub = df[df["label"].isin(list(labs))]
+            pred, _, _ = self.classifier.predict(sub)
+            truth = [labs[int(l)] for l in sub["label"]]
+            y_true += truth
+            y_pred += list(pred)
+            ok = sum(a == b for a, b in zip(truth, pred))
+            per_crop.append({"crop_id": c["id"], "image": c["image"], "n": len(truth), "correct": int(ok),
+                             "accuracy": ok / len(truth), "accuracy_ci": evaluation.wilson(ok, len(truth))})
+        if len(y_true) < 2:
+            raise ApiError("Label some cells in the test crops first.")
+        cats = [c["id"] for c in p.categories]
+        metrics = evaluation.evaluate(y_true, y_pred, cats)
+        info = self.classifier.info
+        groups = {self._group_of(c["image"]) for c in p.data["test_crops"]}
+        report = {
+            "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "classifier_hash": info["hash"],
+            "metrics": metrics,
+            "per_crop": per_crop,
+            "n_images": len(per_crop),
+            "n_images_per_group": int(p.settings["test_images_per_clone"]),
+            "n_groups": len(groups),
+            "labels_per_crop": int(p.settings["test_labels_per_crop"]),
+            "n_training_labels": info["n_labels"],
+            "n_training_crops": len([c for c in p.data["crops"] if c.get("status") == "ready"]),
+            "n_trees": info["n_trees"], "n_features": info["n_features"],
+            "cv_accuracy": info["cross_validation"]["accuracy"],
+        }
+        names = {c["id"]: c["name"] for c in p.categories}
+        report["methods_text"] = evaluation.methods_text(report, names)
+        # Every evaluation is logged: evaluating again after changing the classifier is visible
+        hist_path = p.path("test", "history.json")
+        history = []
+        if os.path.exists(hist_path):
+            with open(hist_path) as f:
+                history = json.load(f)
+        history.append({"date": report["date"], "classifier_hash": info["hash"], "n": metrics["n"],
+                        "balanced_accuracy": metrics["balanced_accuracy"], "accuracy": metrics["accuracy"]})
+        with open(hist_path, "w") as f:
+            json.dump(history, f, indent=1)
+        report["history"] = history
+        with open(p.path("test", "report.json"), "w") as f:
+            json.dump(report, f, indent=1)
+        if p.data["batch"].get("done"):
+            self._write_results(p)
+        return self.test_report()
+
+    def test_report(self):
+        p = self._require()
+        path = os.path.join(p.dir, "test", "report.json")
+        if not os.path.exists(path):
+            return None
+        with open(path) as f:
+            report = json.load(f)
+        report["stale"] = bool(self.classifier) and report["classifier_hash"] != self.classifier.info["hash"]
+        return report
 
     # ---- classifier ------------------------------------------------------------------
 
@@ -730,7 +869,8 @@ class Session:
         if names is None:
             names = [i["image"] for i in self.files() if "fields" in i]
         summaries = batch.load_summaries(p, names)
-        res = quantify.write_outputs(p, summaries, self.classifier.info if self.classifier else None)
+        res = quantify.write_outputs(p, summaries, self.classifier.info if self.classifier else None,
+                                     test_report=self.test_report())
         res["excel"] = display_path(res["excel"])
         res["folder"] = display_path(os.path.join(p.dir, "results"))
         with open(p.path("results", "results.json"), "w") as f:
@@ -747,7 +887,45 @@ class Session:
         # Paths as seen now (the app may have been started with other folder mounts)
         res["folder"] = display_path(os.path.join(p.dir, "results"))
         res["excel"] = display_path(os.path.join(p.dir, "results", res["excel_name"]))
+        res["references"] = quantify.references(p)
         return res
+
+    def results_view(self, categories):
+        """Proportions and statistics with `categories` as 100 % (Results chart)."""
+        p = self._require()
+        summaries = batch.load_summaries(p, [i["image"] for i in self.files() if "fields" in i])
+        if not summaries:
+            raise ApiError("No results yet.")
+        return quantify.results_view(p, summaries, categories)
+
+    def save_reference(self, name, categories):
+        """Keep a custom 100 % in the Excel file and plots."""
+        p = self._require()
+        ids = [c["id"] for c in p.categories]
+        cats = [c for c in ids if c in set(categories)]
+        if not cats:
+            raise ApiError("Choose at least one category for the 100 %.")
+        if quantify.find_reference(p, cats):
+            raise ApiError("This 100 % is already in the Excel file.")
+        name = (name or "").strip() or quantify.default_reference_name(p, cats)
+        if any(r["name"].lower() == name.lower() for r in quantify.references(p)):
+            raise ApiError(f"There is already a 100 % called '{name}'.")
+        with p.lock:
+            n = p.data.get("next_reference", 1)
+            p.data["next_reference"] = n + 1
+            p.data.setdefault("references", []).append({"id": f"ref{n}", "name": name, "categories": cats})
+            p.save()
+        return self.refresh_results()
+
+    def delete_reference(self, ref_id):
+        p = self._require()
+        with p.lock:
+            before = len(p.data.get("references", []))
+            p.data["references"] = [r for r in p.data.get("references", []) if r["id"] != ref_id]
+            if len(p.data["references"]) == before:
+                raise ApiError("Only saved (custom) 100 % can be removed.")
+            p.save()
+        return self.refresh_results()
 
     def refresh_results(self):
         """Rebuild the Excel file and plots (e.g. after editing genotypes) without reclassifying."""
@@ -793,12 +971,20 @@ class Session:
         labels_ok = counts["ready"] and crops_ready
         clf = d["classifier"]
         imported = bool(clf.get("imported_from"))
+        report = self.test_report()
+        test_summary = None
+        if report:
+            m = report["metrics"]
+            test_summary = {"balanced_accuracy": m["balanced_accuracy"], "balanced_accuracy_ci": m["balanced_accuracy_ci"],
+                            "accuracy": m["accuracy"], "n": m["n"], "n_images": report["n_images"],
+                            "date": report["date"], "stale": report["stale"]}
         steps = {
             "project": files["n_ok"] > 0 and files["n_ok"] == files["n"],
             "survey": bool(d["survey"].get("done")) and bool(d["selection"]),
             "crops": crops_ready,
             "label": labels_ok,
             "preview": bool(clf.get("validated")) and not clf.get("stale"),
+            "test": bool(report) and not report["stale"],
             "results": bool(d["batch"].get("done")),
         }
         return {
@@ -811,10 +997,13 @@ class Session:
                 "settings": d["settings"], "filename_template": d["filename_template"],
                 "selection": d["selection"], "crops": [dict(c, fields=_fields(p, c["image"])) for c in d["crops"]],
                 "survey_done": bool(d["survey"].get("done")),
+                "test_crops": [dict(c, fields=_fields(p, c["image"])) for c in d.get("test_crops", [])],
                 "classifier": clf, "batch": d["batch"], "imported_classifier": imported,
             },
             "files": files,
             "labels": counts,
+            "test_labels": self.test_label_counts(),
+            "test": test_summary,
             "steps": steps,
             "classifier": self.classifier_info(),
             "jobs": self.jobs.active(),

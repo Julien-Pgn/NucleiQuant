@@ -68,7 +68,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--images", default="img_test_pipeline")
     ap.add_argument("--name", default="v1-comparison")
-    ap.add_argument("--per-category", type=int, default=55)
+    ap.add_argument("--per-crop", type=int, default=18, help="labels per category in each crop (V2.1 protocol)")
+    ap.add_argument("--per-category", type=int, default=None, help="labels per category over all crops (V2.0 protocol)")
     ap.add_argument("--fresh", action="store_true", help="Delete an existing project with this name first")
     args = ap.parse_args()
     images_dir = os.path.abspath(args.images)
@@ -117,10 +118,12 @@ def main():
         for lab, edge in zip(obj["labels"], obj["edge"]):
             k = int(cls[lab]) if lab < len(cls) else 0
             if not edge and k in V1_CLASSES and V1_CLASSES[k] in cat_id:
-                pools.setdefault(V1_CLASSES[k], []).append((c["id"], lab))
-    for name, items in pools.items():
-        take = rng.permutation(len(items))[: args.per_category]
-        for i in take:
+                key = V1_CLASSES[k] if args.per_category else (c["id"], V1_CLASSES[k])
+                pools.setdefault(key, []).append((c["id"], lab))
+    report["protocol"] = f"{args.per_category} per category" if args.per_category else f"{args.per_crop} per category per crop"
+    for key, items in sorted(pools.items()):
+        name = key if args.per_category else key[1]
+        for i in rng.permutation(len(items))[: args.per_category or args.per_crop]:
             crop_id, lab = items[i]
             s.set_label(crop_id, lab, cat_id[name])
     report["labels"] = s.label_counts()["per_category"]

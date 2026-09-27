@@ -55,7 +55,8 @@ def test_quantify_tables_and_excel(tmp_path, monkeypatch):
     assert tables["per_image"]["Total"].sum() == total == tables["per_organoid"]["Total"].sum()
     res = quantify.write_outputs(p, summaries)
     assert res["n_nuclei"] == total
-    stat = {r["Category"]: r for r in res["stats"] if r["Measure"] == "% of living cells"}
-    assert stat["S"]["Test"] == "Mann-Whitney U" and stat["S"]["p"] < 0.05
     xl = pd.read_excel(res["excel"], sheet_name=None)
+    st = xl["statistics"]
+    s_living = st[(st["Measure"] == "% of living cells") & (st["Category"] == "S")].iloc[0]
+    assert s_living["Test"] == "Mann-Whitney U" and s_living["p"] < 0.05
     assert {"per_image", "per_organoid", "per_organoid_curated", "proportions", "statistics", "classifier", "settings"} <= set(xl)

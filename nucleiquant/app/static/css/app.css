@@ -74,6 +74,7 @@ svg.icon { flex-shrink: 0; }
 .header p { font-size: 13.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .header .hint { font-size: 13px; color: var(--text-2); white-space: nowrap; }
 .content { flex: 1; min-height: 0; overflow: auto; padding: 28px 32px; display: flex; flex-direction: column; gap: 20px; }
+.content > * { flex-shrink: 0; }
 
 /* ---- buttons ----------------------------------------------------------------- */
 .btn { height: 40px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: var(--radius); border: 1px solid var(--line-2); background: var(--raised); color: var(--text); font-size: 14px; cursor: pointer; white-space: nowrap; text-decoration: none; }
@@ -260,7 +261,8 @@ input[type="number"].input { width: 110px; }
 .crop-body h2 { font-size: 15px; font-weight: 600; flex: 1; }
 
 /* ---- results ---------------------------------------------------------------------- */
-.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+a.card.tile:hover { border-color: var(--line-2); background: var(--raised); }
 .tile { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; }
 .tile .l { font-size: 13px; color: var(--text-2); }
 .tile .v { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
@@ -289,6 +291,23 @@ input[type="number"].input { width: 110px; }
 .empty .ic { width: 40px; height: 40px; border-radius: 10px; background: var(--hover); display: flex; align-items: center; justify-content: center; }
 .spinner { width: 16px; height: 16px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.palette { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px; background: var(--raised); border: 1px solid var(--line-2); border-radius: var(--radius); position: absolute; z-index: 40; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
-.palette button { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line-2); cursor: pointer; padding: 0; }
-.palette input[type="color"] { width: 22px; height: 22px; padding: 0; border: 0; background: none; cursor: pointer; }
+.palette { position: fixed; z-index: 60; width: 248px; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--raised); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); }
+.palette-title { font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.palette-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.palette-row button { height: 26px; min-width: 26px; padding: 0 3px; display: inline-flex; align-items: center; gap: 6px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text); font-size: 12.5px; cursor: pointer; }
+.palette-row button.labeled { padding: 0 9px 0 4px; }
+.palette-row button:hover { border-color: var(--text-2); }
+.chip-color { width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0; }
+.palette-custom { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.palette-custom input[type="color"] { width: 26px; height: 26px; padding: 0; border: 1px solid var(--line-2); border-radius: 7px; background: none; cursor: pointer; }
+.swatch.pick { width: 14px; height: 14px; cursor: pointer; }
+.swatch.pick:hover { outline: 2px solid var(--text); outline-offset: 1px; }
+.swatch-btn { width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; border: 1px solid var(--line-2); cursor: pointer; padding: 0; }
+.cat-sub { display: flex; align-items: center; gap: 10px; width: 100%; font-size: 11.5px; }
+.cat-sub .faint { white-space: nowrap; }
+
+/* ---- results: 100 % selector ---------------------------------------------------------- */
+.ref-chip { height: 30px; padding: 0 10px 0 6px; display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--text-3); font-size: 13px; cursor: pointer; }
+.ref-chip:hover { color: var(--text); border-color: var(--text-3); }
+.ref-chip.on { color: var(--text); background: var(--hover); }
+.ref-chip .chip-color { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; box-sizing: border-box; }

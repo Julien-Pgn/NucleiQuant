@@ -1,6 +1,6 @@
 # NucleiQuant user guide
 
-NucleiQuant counts cell types in fluorescence images in six steps. You go through them
+NucleiQuant counts cell types in fluorescence images in seven steps (the Test step is optional). You go through them
 once per experiment; everything is saved as you go, so you can quit and come back at any
 step.
 
@@ -10,7 +10,8 @@ step.
 - [3. Crops](#3-crops)
 - [4. Label](#4-label)
 - [5. Preview](#5-preview)
-- [6. Results](#6-results)
+- [6. Test](#6-test)
+- [7. Results](#7-results)
 - [Reusing a classifier](#reusing-a-classifier)
 - [Settings](#settings)
 - [Questions](#questions)
@@ -101,9 +102,17 @@ Click **Start labeling** when all crops are ready.
 This is where you teach NucleiQuant your cell types.
 
 **Categories.** *Dead* and *Unstained* are always there. Click **Add** to create your own
-categories (e.g. `SATB2+`, `TBR1+`). A cell gets exactly one category, so if cells can
+categories (e.g. `PAX6+`, `BRN2+`). A cell gets exactly one category, so if cells can
 carry two markers and you want to count them, make a category for them (e.g.
-`SATB2+TBR1+`). Double-click a name to rename it, click its colour square to change it.
+`PAX6+BRN2+`). Double-click a name to rename it.
+
+**Colours.** Click a category's colour square (or, when adding one, the square next to its
+name) to choose its colour. The first row offers **your channel colours by name**, so
+PAX6+ cells can be outlined in the same green as the PAX6 channel; then other colours and
+any custom colour. Colours are used everywhere: outlines, plots, Fiji ROIs. Tip: a colour
+identical to its channel can be harder to see on bright cells — hold **H** to compare.
+
+![Choosing a colour](images/05c-colour-picker.png)
 
 **Labeling.** Select a category (click it, or press its number key **1–9**), then click
 nuclei in the image.
@@ -121,11 +130,23 @@ nuclei in the image.
 Brightness & Contrast). **Auto contrast** resets. These settings only change the display,
 never the measurements.
 
-**How many labels?** At least 50 per category (the counters turn green), ideally spread
-over all crops, and including a few hard cases (dim positives, bright negatives). Label
-cells you are sure about; skip the ones you can't decide on. A category you don't use at
-all (e.g. no unstained cells in your staining) can stay empty: NucleiQuant warns you, and the
-classifier simply never predicts it.
+**How many labels?** The recommendation is **10 of each category in every crop** — that is
+30 per category per clone (3 crops per clone). The counter next to each category shows *this
+crop's* count (e.g. `7 / 10`, green tick at 10) and, below, the total in all crops; the strip
+of crops shows each crop's progress (`40 / 50`). Labeling the same amount in every crop keeps
+dim, typical and bright images equally represented, which is what makes the classifier
+robust to staining variation.
+
+It is a recommendation, not a rule: a crop may simply not contain 10 cells of a category.
+Label what you find and move on. When you click **Preview classification** before every
+crop is complete, NucleiQuant lists what is missing where, and you can **Keep labeling** or
+**Preview anyway**. The only requirement is that at least two categories have labels. A
+category with no labels at all (e.g. no unstained cells in your staining) is never predicted.
+
+Label cells you are sure about; skip the ones you can't decide on; include a few hard cases
+(dim positives, bright negatives).
+
+![Missing labels](images/05b-unused-warning.png)
 
 Click **Preview classification**.
 
@@ -151,7 +172,48 @@ every nucleus of every crop is outlined in the colour of its predicted category.
 
 When the preview looks right, click **Classify all images**.
 
-## 6. Results
+## 6. Test
+
+*Optional, but this is the accuracy to report in a paper.*
+
+The accuracy on the Preview screen is measured on your *training* crops (each crop in turn is
+left out). Reviewers usually ask for more: an accuracy measured on **images the classifier
+never saw**, labeled **without seeing its answers**. The Test step does exactly that.
+
+1. **Create test crops.** NucleiQuant draws 2 images per clone at random among the images
+   not used for training (random, so that the test represents the whole experiment), and
+   cuts a smaller crop from each (35 % of the image side).
+2. **Label them blind.** The screen looks like the Label screen, but the classifier's
+   predictions are never shown. Label about **5 cells of each category in each test crop**.
+   Don't hunt for easy or hard cells: label what you are sure of, as you would anywhere.
+   Test labels are stored apart and are **never used for training**.
+3. **Evaluate accuracy.** The report opens.
+
+![Test report](images/11-test-report.png)
+
+**Reading the report**
+
+- **Balanced accuracy** — the mean of the per-category accuracies (recall). Because test
+  cells are picked per category (5 of each), this is the fairest single number.
+- **Accuracy on test cells** and **Cohen's κ** (agreement corrected for chance: above 0.8 is
+  usually called excellent).
+- **95 % confidence intervals** for all of them — the range the true value probably lies in.
+  They shrink with more test cells: with 100 test cells and a true accuracy of 90 %, about
+  ±6 %; with 20 cells of one category, that category's accuracy is known to about ±15 %.
+  Cells from the same image are somewhat alike, so the real uncertainty is a little larger.
+- **Per category**: test cells, recall (how many cells of this category were found) and
+  precision (how many cells called this category really are), with intervals.
+- **Per test image** and the **confusion matrix** (rows: your label, columns: the classifier).
+- **Every evaluation**: each evaluation is logged with its date and classifier, so that
+  evaluating again after changing the training stays visible.
+- **Methods text**: a paragraph describing the test and its result, to copy and adapt.
+
+**Good practice.** Finish your training labels first, then label the test crops and
+evaluate once. If the test shows a weak category, you can label more *training* cells and
+retrain — then evaluate again and report both (the history keeps them). Never copy test
+cells into training.
+
+## 7. Results
 
 ![Running](images/07-running.png)
 
@@ -164,12 +226,19 @@ classifying again reuses the segmentations and is faster.
 
 - **Tiles**: number of images, nuclei, living cells (all except *Dead*) and organoids kept
   for statistics (at least 4 slices by default, as in Pigeon et al.).
-- **Proportions**: each category as a percentage of living cells (or of all nuclei), per
-  organoid or averaged per genotype. Greyed bars are organoids excluded for having too few
-  slices.
-- **Statistics**: see below.
+- **Proportions**: a vertical stacked bar per organoid (or the mean per genotype, with the
+  spread in the tooltip). Greyed bars are organoids excluded for having too few slices.
+  Hover a bar for the percentage and the number of cells.
+- **100 % =**: choose which categories make up 100 %. Tick or untick categories, or use the
+  quick choices: **All nuclei**, **Living cells** (all but Dead) and **Stained cells** (all but
+  Dead and Unstained — e.g. PAX6+ as a share of all marker-positive cells). The bars and the
+  statistics update immediately. **Save in Excel** adds your combination to the Excel file
+  and the plots; **SVG** downloads the chart on a white background for figures.
+- **Statistics**: for the chosen 100 %; see below.
 - **Per image**: counts per image. **View** opens the image with every nucleus outlined in
   its category colour, to check the result anywhere.
+
+![Proportions of stained cells](images/08b-results-stained.png)
 
 ![Checking an image](images/09-image-view.png)
 
@@ -182,9 +251,10 @@ classifying again reuses the segmentations and is faster.
 | `per_image` | one row per image: the parts of its file name, genotype, number of nuclei per category, Total, Living (= Total − Dead) |
 | `per_organoid` | the slices of each organoid added up, with the number of slices |
 | `per_organoid_curated` | only organoids with at least the minimum number of slices |
-| `proportions` | per kept organoid: each category as % of all nuclei and as % of living cells |
-| `statistics` | group comparisons (see below) |
+| `proportions` | per kept organoid, for each 100 % (all nuclei, living cells, stained cells, and each one you saved): the number of cells in it and each category as % of it |
+| `statistics` | group comparisons for each 100 % (column *Measure*, e.g. "% of stained cells") |
 | `classifier` | labels per category, accuracy on unseen crops, recall per category, most important measurements |
+| `test_set` | the independent test (if done): accuracies with 95 % CI, per category, per test image, confusion matrix, every evaluation, methods text |
 | `settings` | everything needed to reproduce the analysis (channels, pattern, segmentation settings, version) |
 
 ### The results folder
@@ -195,7 +265,7 @@ classifying again reuses the segmentations and is faster.
 | `rois/` | Fiji ROI sets: open the image in Fiji, then the zip in the ROI Manager. Each nucleus is named and coloured by its category |
 | `labels/` | nucleus label images (`.tif` and `.h5`), as in V1 |
 | `overlays/` | quick-look pictures with coloured outlines |
-| `plots/` | proportion plots in PNG and SVG (editable in Illustrator/Inkscape) |
+| `plots/` | proportion bar plots (and per-genotype box plots) for each 100 %, in PNG and SVG (editable in Illustrator/Inkscape) |
 
 ### Statistics
 
@@ -204,7 +274,9 @@ organoid** (its proportion), never individual cells.
 
 - Two groups (e.g. WT vs KO): **Mann-Whitney U** test.
 - Three or more: **Kruskal-Wallis**, then **Dunn's** test for each pair.
-- p-values are **Holm-corrected** for the number of categories tested (and of pairs).
+- p-values are **Holm-corrected** for the number of categories tested (and of pairs),
+  separately for each 100 %. If you report several 100 % for the same question, remember
+  they are not corrected against each other.
 - Groups are genotypes (or clones, see Settings). With fewer than 3 organoids in a group,
   the test can't reach significance; NucleiQuant warns you.
 
@@ -225,8 +297,11 @@ classifier.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Labels per category | 50 | labels needed per category before the preview |
+| Labels per category per crop | 10 | recommended labels of each category in each crop (not enforced) |
 | Min. slices per organoid | 4 | organoids with fewer slices are left out of proportions and statistics |
+| Test images per clone | 2 | random images per clone, never used for training, for the test set |
+| Test crop size | 35 % | test crop side as a percentage of the image side |
+| Test labels per category per crop | 5 | recommended test labels of each category in each test crop |
 | Compare groups by | Genotype | or Clone |
 | Crop size | 50 % | crop side as a percentage of the image side |
 | Neighbourhood ring | 30 px | ring around each nucleus measured for context (as ilastik's "neighborhood") |
@@ -260,11 +335,11 @@ nearby signal, which often works. There is no whole-cell segmentation.
 **Where are my projects?** In `NucleiQuant_projects` inside your images folder. The home
 screen lists recent projects; **Open project** opens any of them.
 
-**NucleiQuant runs on a lab workstation and I work from my laptop.** Start it on the
-workstation, then forward port 8765 to your laptop: in VS Code (Remote-SSH), open the
-**PORTS** tab › Forward a Port › `8765`; or run `ssh -N -L 8765:127.0.0.1:8765 you@workstation`
-on your laptop. Then open <http://localhost:8765> on your laptop. The images stay on the
-workstation.
+**NucleiQuant runs on a lab workstation and I work from my laptop.** Add one line to the
+workstation's entry in `~/.ssh/config` on your laptop — `LocalForward 127.0.0.1:8765 127.0.0.1:8765` —
+and <http://localhost:8765> works on the laptop whenever NucleiQuant runs on the workstation,
+with VS Code or plain `ssh`. Details and other options: Readme › *From another computer (SSH)*.
+The images stay on the workstation.
 
 **Nothing happens / the page says it can't reach NucleiQuant.** The app was stopped. Start it
 again with the launcher; your project reopens where you left it.

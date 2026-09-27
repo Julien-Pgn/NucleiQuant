@@ -41,8 +41,14 @@ DEFAULT_SETTINGS = {
     # Training images and crops
     "survey_channel": 1,
     "crop_fraction": 0.5,
-    # Labeling target per category before the preview unlocks
-    "label_target": 50,
+    # Recommended labels per category in each crop (not enforced: a crop may not
+    # contain that many cells of a category)
+    "labels_per_crop": 10,
+    # Independent test set: random images per clone not used for training, smaller
+    # crops, a few labels per category (blind to predictions)
+    "test_images_per_clone": 2,
+    "test_crop_fraction": 0.35,
+    "test_labels_per_crop": 5,
     # Features
     "ring_radius": 30,
     "perinuclear_radius": 4,
@@ -197,10 +203,13 @@ class Project:
         return metadata.parse_filename(image_name, self.pattern())
 
     def crop(self, crop_id):
-        for c in self.data["crops"]:
+        for c in self.data["crops"] + self.data.get("test_crops", []):
             if c["id"] == crop_id:
                 return c
         raise KeyError(f"No crop '{crop_id}'")
+
+    def is_test_crop(self, crop_id):
+        return any(c["id"] == crop_id for c in self.data.get("test_crops", []))
 
     def category(self, category_id):
         for c in self.categories:

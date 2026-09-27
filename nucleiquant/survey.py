@@ -16,7 +16,7 @@ from skimage.filters import threshold_otsu
 from . import io
 from .segmentation import normalization_range
 
-__all__ = ["image_refs", "survey_image", "pick_training_images", "ROLES"]
+__all__ = ["image_refs", "survey_image", "pick_training_images", "pick_test_images", "ROLES"]
 
 DOWNSAMPLE = 4
 ROLES = (("Dim", 0.10), ("Typical", 0.50), ("Bright", 0.90))
@@ -115,4 +115,24 @@ def pick_training_images(entries, channel, group_of):
                     taken.add(name)
                     picks[name] = f"{role} · Q{int(q * 100)}"
                     break
+    return picks
+
+
+def pick_test_images(image_names, exclude, group_of, n_per_group=2, seed=0):
+    """Random images per group (clone) for the independent test set.
+
+    Images used for training (`exclude`) are never picked. Random rather than
+    intensity-based, so the test set represents the whole experiment. The same seed
+    gives the same choice.
+    """
+    rng = np.random.default_rng(seed)
+    groups = {}
+    for name in sorted(image_names):
+        if name not in exclude:
+            groups.setdefault(group_of(name), []).append(name)
+    picks = []
+    for g in sorted(groups):
+        items = groups[g]
+        take = rng.permutation(len(items))[: n_per_group]
+        picks += [items[i] for i in sorted(take)]
     return picks

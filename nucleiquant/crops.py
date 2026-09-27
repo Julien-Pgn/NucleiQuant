@@ -46,19 +46,20 @@ def auto_place(img, nuclear_channel=0, fraction=0.5):
     return {"y": max(0, y), "x": max(0, x), "h": h, "w": w}
 
 
-def crop_paths(project, crop_id):
-    base = project.path("training", "crops", crop_id)
+def crop_paths(project, crop_id, folder="training"):
+    """Files of a crop; training crops live in training/, test crops in test/."""
+    base = project.path(folder, "crops", crop_id)
     return {
         "image": base + ".tif",
-        "labels": project.path("training", "labels", crop_id + "_labels"),
-        "features": project.path("training", "cache", crop_id + "_features.pkl"),
-        "outlines": project.path("training", "cache", crop_id + "_outlines.npz"),
-        "thumb": project.path("training", "cache", crop_id + "_thumb.jpg"),
-        "film": project.path("training", "cache", crop_id + "_film.jpg"),
+        "labels": project.path(folder, "labels", crop_id + "_labels"),
+        "features": project.path(folder, "cache", crop_id + "_features.pkl"),
+        "outlines": project.path(folder, "cache", crop_id + "_outlines.npz"),
+        "thumb": project.path(folder, "cache", crop_id + "_thumb.jpg"),
+        "film": project.path(folder, "cache", crop_id + "_film.jpg"),
     }
 
 
-def build_crop(project, crop, survey_entry=None, progress=None):
+def build_crop(project, crop, survey_entry=None, progress=None, folder="training", fraction=None):
     """Cut, segment and describe one crop. Updates and returns the crop dict."""
     def step(msg, frac):
         if progress:
@@ -74,13 +75,13 @@ def build_crop(project, crop, survey_entry=None, progress=None):
         survey_entry = survey_image(image_path, nuc, s["norm_low"], s["norm_high"])
     C, H, W = img.shape
     if crop.get("y") is None:
-        crop.update(auto_place(img, nuc, s["crop_fraction"]))
+        crop.update(auto_place(img, nuc, fraction or s["crop_fraction"]))
     y, x, h, w = crop["y"], crop["x"], crop["h"], crop["w"]
     y = int(np.clip(y, 0, H - h))
     x = int(np.clip(x, 0, W - w))
     crop["y"], crop["x"] = y, x
     region = img[:, y:y + h, x:x + w]
-    paths = crop_paths(project, crop["id"])
+    paths = crop_paths(project, crop["id"], folder)
 
     colors = [ch["color"] for ch in project.data["channels"]]
     ranges = render.display_ranges(survey_entry["refs"])
@@ -117,8 +118,8 @@ def build_crop(project, crop, survey_entry=None, progress=None):
     return crop
 
 
-def remove_crop_files(project, crop_id):
-    paths = crop_paths(project, crop_id)
+def remove_crop_files(project, crop_id, folder="training"):
+    paths = crop_paths(project, crop_id, folder)
     for key, p in paths.items():
         for candidate in ([p + ".tif", p + ".h5"] if key == "labels" else [p]):
             if os.path.exists(candidate):

@@ -1,7 +1,7 @@
 // Steps 4 and 5 — Label cells, then preview the classification.
 import * as api from "../api.js";
 import { Viewer } from "../viewer.js";
-import { h, icon, errorToast, toast, confirm, colorPopover, switchEl, fmt, shortName, progressBar } from "../ui.js";
+import { h, icon, errorToast, toast, confirm, modal, colorPopover, switchEl, fmt, shortName, progressBar } from "../ui.js";
 
 let viewer = null;
 let keyHandlers = null;
@@ -28,7 +28,8 @@ export function featureLabel(name, channels) {
 }
 
 async function loadCrop(ctx, cropId, withPredictions) {
-  const crop = ctx.store.state.project.crops.find((c) => c.id === cropId);
+  const pr = ctx.store.state.project;
+  const crop = [...pr.crops, ...(pr.test_crops || [])].find((c) => c.id === cropId);
   const key = `${ctx.store.state.project.dir}|${cropId}|${crop ? crop.built : ""}`;
   let d = cache.get(key);
   if (!d) {
@@ -64,11 +65,15 @@ async function loadCrop(ctx, cropId, withPredictions) {
 
 export async function render(root, ctx, route) {
   const preview = route === "preview";
+  // Test mode: labeling of the independent test crops, blind to predictions
+  const test = route === "test";
+  const CK = test ? "testCropId" : "cropId";
+  const LB = () => (test ? ctx.store.state.test_labels : ctx.store.state.labels);
   let st = ctx.store.state;
   const p = () => ctx.store.state.project;
-  const readyCrops = () => p().crops.filter((c) => c.status === "ready");
+  const readyCrops = () => (test ? p().test_crops : p().crops).filter((c) => c.status === "ready");
   if (!readyCrops().length) { ctx.navigate("crops"); return; }
-  if (!readyCrops().some((c) => c.id === current.cropId)) current.cropId = readyCrops()[0].id;
+  if (!readyCrops().some((c) => c.id === current[CK])) current[CK] = readyCrops()[0].id;
   const cats = () => p().categories;
   if (!cats().some((c) => c.id === current.category)) current.category = (cats().find((c) => !c.builtin) || cats()[0]).id;
 
@@ -90,7 +95,7 @@ export async function render(root, ctx, route) {
   const header = h("header", { class: "header" });
   const viewerEl = h("div", { class: "viewer", tabindex: "0", "aria-label": "Image viewer" });
   const chip = h("div", { class: "float tl" });
-  const legend = h("div", { class: "float tr" });
+  const legend = h("div", { class: "float tr hidden" });
   const zoomText = h("span", { class: "mono", style: { width: "52px", textAlign: "center", fontSize: "12.5px" } }, "100%");
   const zoomBox = h("div", { class: "float bl" },
     h("button", { class: "icon-btn", type: "button", "aria-label": "Zoom out", onclick: () => viewer.zoomBy(1 / 1.4) }, icon("minus", 16, { width: 2 })),
@@ -110,21 +115,34 @@ export async function render(root, ctx, route) {
   const drawHeader = () => {
     st = ctx.store.state;
     header.innerHTML = "";
-    const lbl = st.labels;
-    if (!preview) {
-      const go = h("button", { class: "btn primary", type: "button", disabled: !lbl.ready }, "Preview classification", icon("arrow", 16, { width: 2 }));
-      const unusedNames = lbl.unused.map((id) => (cats().find((c) => c.id === id) || { name: id }).name);
+    const lbl = LB();
+    if (test) {
+      const go = h("button", { class: "btn primary", type: "button", disabled: lbl.total < 2 }, "Evaluate accuracy", icon("arrow", 16, { width: 2 }));
       go.addEventListener("click", async () => {
-        if (unusedNames.length && !(await confirm(`${unusedNames.join(", ")} ${unusedNames.length > 1 ? "have" : "has"} no labels`,
-          `The classifier won't be able to call any cell ${unusedNames.join(" or ")}. That's fine if there are none in your images; otherwise label some first.`, "Preview anyway"))) return;
+        if (!lbl.complete && !(await shortfallDialog(lbl, "Evaluate anyway"))) return;
+        go.disabled = true;
+        try { await api.post("/api/test/evaluate"); await ctx.refresh(); ctx.navigate("test/report"); } catch (e) { errorToast(e); go.disabled = false; }
+      });
+      const hereLeft = lbl.needed_per_crop[current[CK]] || 0;
+      header.append(
+        h("div", { class: "titles" }, h("h1", {}, "Test set"),
+          h("p", {}, `Label cells blind: the classifier's answers are hidden. Recommended: ${lbl.target} of each category in each test crop.`)),
+        h("span", { class: "hint" }, lbl.complete ? "Every test crop is complete" : hereLeft ? `This crop: ${hereLeft} to go (recommended)` : "This crop is complete"),
+        ...(st.test ? [h("a", { class: "btn", href: "#/test/report" }, "Report")] : []),
+        go);
+    } else if (!preview) {
+      const go = h("button", { class: "btn primary", type: "button", disabled: !lbl.ready }, "Preview classification", icon("arrow", 16, { width: 2 }));
+      go.addEventListener("click", async () => {
+        if (!lbl.complete && !(await shortfallDialog(lbl))) return;
         ctx.navigate("preview");
       });
-      const usedCount = cats().length - lbl.unused.length;
-      const hint = lbl.needed > 0 ? `${lbl.needed} more label${lbl.needed > 1 ? "s" : ""} needed`
-        : usedCount < 2 ? "Label at least two categories" : `${lbl.total} labels · ready`;
+      const hereLeft = lbl.needed_per_crop[current[CK]] || 0;
+      const hint = !lbl.ready ? "Label at least two categories"
+        : lbl.complete ? "Every crop has enough labels"
+          : hereLeft ? `This crop: ${hereLeft} to go (recommended)` : "This crop is complete · check the others";
       header.append(
         h("div", { class: "titles" }, h("h1", {}, "Label cells"),
-          h("p", {}, `Choose a category, then click nuclei. Aim for ${lbl.target}–${lbl.target + 10} per category, spread over all crops.`)),
+          h("p", {}, `Choose a category, then click nuclei. Recommended: ${lbl.target} of each category in every crop — if a crop has fewer, label what it has.`)),
         h("span", { class: "hint" }, hint),
         go);
     } else {
@@ -145,6 +163,42 @@ export async function render(root, ctx, route) {
         go);
     }
   };
+
+  // Recommended labels missing: list them, let the user continue anyway
+  const shortfallDialog = (lbl, goLabel = "Preview anyway") => new Promise((resolve) => {
+    const catName = (id) => (cats().find((c) => c.id === id) || { name: id }).name;
+    const byCrop = new Map();
+    for (const s of lbl.shortfalls) {
+      if (lbl.unused.includes(s.category)) continue;
+      if (!byCrop.has(s.crop_id)) byCrop.set(s.crop_id, []);
+      byCrop.get(s.crop_id).push(`${catName(s.category)} ${s.n}/${lbl.target}`);
+    }
+    const lines = [];
+    for (const [cropId, items] of byCrop) {
+      const crop = readyCrops().find((c) => c.id === cropId);
+      lines.push(h("div", { style: { display: "flex", gap: "10px", fontSize: "13px" } },
+        h("span", { style: { width: "92px", flexShrink: "0", fontWeight: "500" } }, crop ? shortName(crop.image, crop.fields) : cropId),
+        h("span", { class: "muted" }, items.join(" · "))));
+    }
+    const unused = lbl.unused.map(catName);
+    let decided = false;
+    modal({
+      title: test ? "Some test crops have fewer labels than recommended" : "Some crops have fewer labels than recommended",
+      text: test
+        ? `${lbl.target} of each category per test crop gives every category a similar weight in the accuracy. Fewer test cells only make the confidence intervals wider.`
+        : `${lbl.target} of each category per crop keeps the training balanced across dim, typical and bright images. If a crop simply doesn't contain that many cells of a category, it's fine to continue.`,
+      body: h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", maxHeight: "260px", overflow: "auto" } },
+        ...lines,
+        unused.length ? h("div", { class: "banner", style: { marginTop: "6px" } },
+          test ? `${unused.join(", ")} ${unused.length > 1 ? "have" : "has"} no test cells: ${unused.length > 1 ? "their" : "its"} accuracy can't be measured.`
+            : `${unused.join(", ")} ${unused.length > 1 ? "have" : "has"} no labels at all: the classifier won't be able to call any cell ${unused.join(" or ")}.`) : null),
+      actions: [
+        { label: "Keep labeling", onClick: () => { decided = true; resolve(false); } },
+        { label: goLabel, kind: "primary", onClick: () => { decided = true; resolve(true); } },
+      ],
+      onClose: () => { if (!decided) resolve(false); },
+    });
+  });
 
   // ---- viewer
   const catIndex = () => new Map(cats().map((c, i) => [c.id, i]));
@@ -203,8 +257,9 @@ export async function render(root, ctx, route) {
     if (next) data.annotations.set(lab, next); else data.annotations.delete(lab);
     viewer.draw();
     try {
-      const counts = await api.post("/api/labels", { crop_id: current.cropId, label: lab, category_id: next });
-      ctx.store.state.labels = counts;
+      const counts = await api.post("/api/labels", { crop_id: current[CK], label: lab, category_id: next });
+      ctx.store.state.labels = counts.labels;
+      ctx.store.state.test_labels = counts.test_labels;
       if (ctx.store.state.classifier) ctx.store.state.project.classifier.stale = true;
       drawHeader();
       drawInspector();
@@ -233,20 +288,21 @@ export async function render(root, ctx, route) {
 
   // ---- crop switching
   async function showCrop(cropId) {
-    current.cropId = cropId;
+    current[CK] = cropId;
     loading.classList.remove("hidden");
     try {
       data = await loadCrop(ctx, cropId, preview);
       viewer.setData(data);
       if (!channels) setupChannels(); else viewer.setChannels(channels.map((c, i) => ({ ...c, max: Math.max(c.max, viewer.autoRange(i).max) })));
-      const crop = p().crops.find((c) => c.id === cropId);
+      const crop = readyCrops().find((c) => c.id === cropId);
       const all = readyCrops();
       chip.innerHTML = "";
       chip.append(h("span", { style: { fontWeight: "600" } }, shortName(crop.image, crop.fields)),
-        h("span", { class: "faint" }, `Crop ${all.findIndex((c) => c.id === cropId) + 1} of ${all.length}`));
+        h("span", { class: "faint" }, `${test ? "Test crop" : "Crop"} ${all.findIndex((c) => c.id === cropId) + 1} of ${all.length}`));
       drawLegend();
       drawFilm();
       drawInspector();
+      drawHeader();
     } catch (e) { errorToast(e); }
     loading.classList.add("hidden");
   }
@@ -261,14 +317,18 @@ export async function render(root, ctx, route) {
   const drawFilm = () => {
     st = ctx.store.state;
     film.innerHTML = "";
+    const target = LB().target;
     for (const c of readyCrops()) {
-      const per = st.labels.per_crop[c.id] || {};
-      const n = Object.values(per).reduce((a, b) => a + b, 0);
-      const bar = h("span", { class: "minibar" }, ...cats().map((k) => (per[k.id] ? h("span", { style: { flexGrow: per[k.id], background: k.color } }) : null)));
-      const item = h("button", { class: `film-item ${c.id === current.cropId ? "on" : ""}`, type: "button", "aria-current": c.id === current.cropId ? "true" : null, onclick: () => showCrop(c.id) },
+      const per = LB().per_crop[c.id] || {};
+      const done = cats().reduce((a, k) => a + Math.min(per[k.id] || 0, target), 0);
+      const goal = cats().length * target;
+      const bar = h("span", { class: "minibar" }, ...cats().map((k) => (per[k.id] ? h("span", { style: { flexGrow: Math.min(per[k.id], target), background: k.color } }) : null)),
+        done < goal ? h("span", { style: { flexGrow: goal - done, background: "transparent" } }) : null);
+      const item = h("button", { class: `film-item ${c.id === current[CK] ? "on" : ""}`, type: "button", "aria-current": c.id === current[CK] ? "true" : null, onclick: () => showCrop(c.id) },
         h("img", { src: `/api/crops/${c.id}/film`, alt: "" }),
         h("span", { class: "info" }, h("span", { class: "n" }, shortName(c.image, c.fields)),
-          h("span", { class: "s" }, preview ? `${fmt(c.n_nuclei)} nuclei` : `${n} label${n === 1 ? "" : "s"}`),
+          h("span", { class: "s", style: { display: "flex", alignItems: "center", gap: "5px" } },
+            preview ? `${fmt(c.n_nuclei)} nuclei` : [done >= goal ? icon("tick", 12, { color: "#5BD68A", width: 2.5 }) : null, `${done} / ${goal}`]),
           !preview ? bar : null));
       film.append(item);
     }
@@ -278,33 +338,42 @@ export async function render(root, ctx, route) {
         : [["1–9", "category"], ["E", "erase"], ["H", "hide outlines"], ["Scroll", "zoom"]]).map(([k, t]) => h("span", {}, h("b", {}, k), ` ${t}`))));
   };
 
+  const colorChoices = () => [
+    { title: "Same as a channel", items: p().channels.map((ch) => ({ color: ch.color, label: ch.name })) },
+    { title: "Other colours", items: ctx.store.state.category_colors.map((col) => ({ color: col })) },
+  ];
+
   // ---- inspector
   let adding = false;
+  // The new-category draft survives redraws of the inspector (e.g. when a crop finishes loading)
+  const draft = { name: "", color: null };
   let showConfusion = false;
   const drawInspector = () => {
     st = ctx.store.state;
     inspector.innerHTML = "";
-    const target = st.labels.target;
+    const target = LB().target;
 
     if (preview) inspector.append(classifierSection());
 
     // Categories
     const catSec = h("section", { class: "insp-section" },
       h("div", { class: "insp-head" }, h("h2", {}, preview ? "Correct with" : "Categories"),
-        !preview ? h("button", { class: "btn ghost small", type: "button", onclick: () => { adding = true; drawInspector(); } }, icon("plus", 14, { width: 2 }), "Add") : null));
+        !preview && !test ? h("button", { class: "btn ghost small", type: "button", onclick: () => { adding = true; drawInspector(); } }, icon("plus", 14, { width: 2 }), "Add") : null));
+    const here = LB().per_crop[current[CK]] || {};
     cats().forEach((c, i) => {
-      const n = st.labels.per_category[c.id] || 0;
+      const n = LB().per_category[c.id] || 0;
+      const nHere = here[c.id] || 0;
       const on = c.id === current.category;
-      const sw = h("span", { class: "swatch", style: { background: c.color, cursor: "pointer" }, title: "Change colour" });
+      const sw = h("span", { class: "swatch pick", style: { background: c.color }, title: "Change colour", role: "button", "aria-label": `Change the colour of ${c.name}` });
       sw.addEventListener("click", (e) => {
         e.stopPropagation();
-        colorPopover(sw, st.category_colors, async (col) => {
-          try { await api.patch(`/api/categories/${c.id}`, { color: col }); await ctx.refresh(); drawInspector(); drawLegend(); viewer.draw(); } catch (err) { errorToast(err); }
+        colorPopover(sw, colorChoices(), async (col) => {
+          try { await api.patch(`/api/categories/${c.id}`, { color: col }); await ctx.refresh(); drawInspector(); drawLegend(); drawFilm(); viewer.draw(); } catch (err) { errorToast(err); }
         });
       });
       const name = h("span", { class: "name", title: c.builtin ? "Always included" : "Double-click to rename" }, c.name,
         c.builtin ? icon("lock", 12, { color: "#80868E", width: 2 }) : null);
-      if (!c.builtin) {
+      if (!c.builtin && !test) {
         name.addEventListener("dblclick", (e) => {
           e.stopPropagation();
           const inp = h("input", { class: "input small", value: c.name, style: { width: "130px" } });
@@ -321,7 +390,7 @@ export async function render(root, ctx, route) {
           inp.addEventListener("click", (ev) => ev.stopPropagation());
         });
       }
-      const del = !c.builtin && !preview ? h("button", { class: "icon-btn", type: "button", "aria-label": `Delete ${c.name}`, style: { width: "22px", height: "22px", opacity: "0.6" } }, icon("trash", 13)) : null;
+      const del = !c.builtin && !preview && !test ? h("button", { class: "icon-btn", type: "button", "aria-label": `Delete ${c.name}`, style: { width: "22px", height: "22px", opacity: "0.6" } }, icon("trash", 13)) : null;
       if (del) del.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (!(await confirm(`Delete “${c.name}”?`, n ? `Its ${n} labels will be removed too.` : "", "Delete", true))) return;
@@ -333,30 +402,46 @@ export async function render(root, ctx, route) {
       });
       const row = h("button", { class: `cat ${on ? "on" : ""}`, type: "button", "aria-pressed": on ? "true" : "false" },
         h("span", { class: "top" }, sw, name,
-          !preview && n >= target ? icon("tick", 14, { color: "#5BD68A", width: 2.5 }) : null,
-          h("span", { class: "count" }, preview ? `${n}` : [String(n), h("span", {}, ` / ${target}`)]),
+          !preview && nHere >= target ? icon("tick", 14, { color: "#5BD68A", width: 2.5 }) : null,
+          h("span", { class: "count", title: preview ? "Labels in all crops" : "Labels in this crop / recommended" },
+            preview ? `${n}` : [String(nHere), h("span", {}, ` / ${target}`)]),
           del,
           i < 9 ? h("kbd", {}, String(i + 1)) : null),
-        !preview ? h("span", { class: "bar", style: { width: "100%" } }, h("span", { style: { width: `${Math.min(100, (100 * n) / target)}%`, background: c.color } })) : null);
+        !preview ? h("span", { class: "cat-sub" },
+          h("span", { class: "bar", style: { flex: "1" } }, h("span", { style: { width: `${Math.min(100, (100 * nHere) / target)}%`, background: c.color } })),
+          h("span", { class: "faint", title: "Labels in all crops" }, `${n} in all crops`)) : null);
       row.addEventListener("click", () => { current.category = c.id; display.erase = false; eraseChip.classList.add("hidden"); drawInspector(); });
       catSec.append(row);
     });
     if (adding) {
-      const inp = h("input", { class: "input small", placeholder: "Category name, e.g. SATB2+", style: { flex: "1" } });
+      const used = new Set(cats().map((c) => c.color));
+      if (!draft.color) draft.color = st.category_colors.find((col) => !used.has(col)) || st.category_colors[0];
+      const inp = h("input", { class: "input small", placeholder: "Category name, e.g. PAX6+", style: { flex: "1", minWidth: "0" }, value: draft.name });
+      inp.addEventListener("input", () => { draft.name = inp.value; });
+      const colBtn = h("button", { type: "button", class: "swatch-btn", title: "Colour of this category", "aria-label": "Choose a colour", style: { background: draft.color } });
+      colBtn.addEventListener("click", () => colorPopover(colBtn, colorChoices(), (col) => { draft.color = col; colBtn.style.background = col; inp.focus(); }));
+      const close = () => { adding = false; draft.name = ""; draft.color = null; drawInspector(); };
       const add = async () => {
-        if (!inp.value.trim()) { adding = false; drawInspector(); return; }
-        try { await api.post("/api/categories", { name: inp.value }); await ctx.refresh(); const nc = cats()[cats().length - 1]; current.category = nc.id; } catch (e) { errorToast(e); }
-        adding = false; drawInspector(); drawFilm(); drawHeader();
+        if (!inp.value.trim()) { close(); return; }
+        try { await api.post("/api/categories", { name: inp.value, color: draft.color }); await ctx.refresh(); const nc = cats()[cats().length - 1]; current.category = nc.id; } catch (e) { errorToast(e); return; }
+        close(); drawFilm(); drawHeader(); drawLegend();
       };
-      inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") add(); if (e.key === "Escape") { adding = false; drawInspector(); } });
-      catSec.append(h("div", { class: "cat-edit" }, inp, h("button", { class: "btn small primary", type: "button", onclick: add }, "Add")));
+      inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") add(); if (e.key === "Escape") close(); });
+      catSec.append(h("div", { class: "cat-edit" }, colBtn, inp, h("button", { class: "btn small primary", type: "button", onclick: add }, "Add")));
       setTimeout(() => inp.focus(), 0);
     }
-    if (!preview) {
+    if (test) {
+      const left = LB().needed_per_crop[current[CK]] || 0;
       catSec.append(h("div", { class: "faint", style: { fontSize: "12.5px", padding: "4px 4px 0", lineHeight: "1.5" } },
-        st.labels.total === 0 ? "Click nuclei to label them with the selected category. Cells with two markers need their own category (e.g. “S+T”)."
-          : st.labels.needed > 0 ? `${st.labels.total} labels · ${st.labels.needed} more needed. Cells with two markers need their own category (e.g. “S+T”).`
-            : `${st.labels.total} labels · every labeled category has enough.`));
+        `Test crops come from images the classifier never saw. Label what you are sure of, without looking for “hard” or “easy” cells. ${left ? `This crop: ${left} to go.` : "This crop is complete."} These labels are never used for training.`));
+    } else if (!preview) {
+      const left = LB().needed_per_crop[current[CK]] || 0;
+      catSec.append(h("div", { class: "faint", style: { fontSize: "12.5px", padding: "4px 4px 0", lineHeight: "1.5" } },
+        LB().total === 0
+          ? `Click nuclei to label them with the selected category. Recommended: ${target} of each category in each crop. Click a colour square to change a category's colour.`
+          : left > 0
+            ? `This crop: ${left} to go. If it has fewer than ${target} cells of a category, label what you find and move on. Cells with two markers need their own category (e.g. “S+T”).`
+            : `This crop has ${target} of each category. ${LB().complete ? "All crops are complete." : "Use ] to go to the next crop."}`));
     }
     inspector.append(catSec);
 
@@ -470,7 +555,7 @@ export async function render(root, ctx, route) {
     const ok = await train(null, ctx);
     if (!ok) return;
     cache.forEach((d) => { d.predictions = null; });
-    await showCrop(current.cropId);
+    await showCrop(current[CK]);
     drawHeader();
   }
 
@@ -492,7 +577,7 @@ export async function render(root, ctx, route) {
     else if (k === "-") viewer.zoomBy(1 / 1.4);
     else if (k === "]" || k === "[") {
       const all = readyCrops();
-      const i = all.findIndex((c) => c.id === current.cropId);
+      const i = all.findIndex((c) => c.id === current[CK]);
       const j = (i + (k === "]" ? 1 : -1) + all.length) % all.length;
       showCrop(all[j].id);
     } else if (k === "r" && preview) retrain();
@@ -507,7 +592,7 @@ export async function render(root, ctx, route) {
 
   drawHeader();
   drawInspector();
-  await showCrop(current.cropId);
+  await showCrop(current[CK]);
 }
 
 // Train with a progress modal. Returns true when done.

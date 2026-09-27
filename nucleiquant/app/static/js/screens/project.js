@@ -127,7 +127,7 @@ export async function render(root, ctx) {
     const groupSeg = h("div", { class: "seg small" },
       ...["genotype", "clone"].map((g) => h("button", { type: "button", class: s.group_by === g ? "on" : "", onclick: () => save({ settings: { group_by: g } }) }, g === "genotype" ? "Genotype" : "Clone")));
     const adv = h("div", { class: `card pad ${advOpen ? "" : "hidden"}`, style: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "16px 20px" } },
-      num("label_target", "Labels per category", { min: 5, max: 1000 }),
+      num("labels_per_crop", "Labels per category per crop", { min: 1, max: 200 }),
       num("min_slices", "Min. slices per organoid", { min: 1, max: 100 }),
       h("div", { class: "field" }, "Compare groups by", groupSeg),
       num("crop_fraction", "Crop size (% of image side)", { scale: 100, min: 10, max: 100, resegment: true }),
@@ -136,6 +136,9 @@ export async function render(root, ctx) {
       num("n_trees", "Trees in the forest", { min: 10, max: 1000, step: 10 }),
       num("uncertain_threshold", "“Uncertain” below probability", { min: 0.3, max: 0.99, step: 0.05 }),
       h("div"),
+      num("test_images_per_clone", "Test images per clone", { min: 1, max: 10 }),
+      num("test_crop_fraction", "Test crop size (% of image side)", { scale: 100, min: 10, max: 100 }),
+      num("test_labels_per_crop", "Test labels per category per crop", { min: 1, max: 100 }),
       num("norm_low", "Segmentation: low percentile", { min: 0, max: 20, step: 0.1, resegment: true }),
       num("norm_high", "Segmentation: high percentile", { min: 80, max: 100, step: 0.1, resegment: true }),
       h("div", { class: "field" }, "Save every feature of every nucleus",
@@ -143,7 +146,7 @@ export async function render(root, ctx) {
           switchEl(s.save_all_features, (v) => save({ settings: { save_all_features: v } }), "Save every feature"),
           h("span", { class: "faint", style: { fontSize: "12.5px" } }, "large files"))));
     const advBtn = h("button", { class: "link", type: "button", style: { color: "#A3A9B1", display: "flex", alignItems: "center", gap: "8px", fontSize: "14px" } },
-      icon(advOpen ? "down" : "chevron"), "Advanced settings", h("span", { class: "faint" }, "· segmentation, rings, label target, slices per organoid"));
+      icon(advOpen ? "down" : "chevron"), "Advanced settings", h("span", { class: "faint" }, "· segmentation, rings, labels per crop, slices per organoid"));
     advBtn.addEventListener("click", () => {
       adv.classList.toggle("hidden");
       advOpen = !adv.classList.contains("hidden");
@@ -154,8 +157,9 @@ export async function render(root, ctx) {
       ["Project.", "Point to your images."],
       ["Survey.", "Pick dim, typical and bright images for training."],
       ["Crops.", "Small regions are cut and their nuclei segmented."],
-      ["Label.", "Click 50–60 cells for each category."],
+      ["Label.", "Click about 10 cells of each category in each crop."],
       ["Preview.", "Check the result, correct mistakes."],
+      ["Test.", "Label a few cells on new images to measure the accuracy (optional, for your paper)."],
       ["Results.", "Every image is classified; you get Excel, plots and statistics."],
     ];
     const how = h("aside", { class: "card", style: { width: "330px", flexShrink: "0", alignSelf: "flex-start", padding: "22px", display: "flex", flexDirection: "column", gap: "16px" } },

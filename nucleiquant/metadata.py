@@ -62,4 +62,4 @@ def parse_filename(filename, pattern=FILENAME_PATTERN):
     match = pattern.match(filename)
     if match is None:
         raise ValueError(f"Filename does not match the expected naming convention: {filename!r}")
-    return match.groupdict()
+    return {k: v.strip() for k, v in match.groupdict().items()}

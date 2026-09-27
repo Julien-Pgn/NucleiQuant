@@ -117,9 +117,12 @@ if [ -z "${NQ_NO_BROWSER:-}" ]; then
 fi
 info "Keep this window open while you work. Quit from the app (or press Ctrl+C here)."
 if [ -n "${SSH_CONNECTION:-}" ]; then
-    info "You are connected over SSH: the link works on your own computer once port ${PORT} is forwarded."
-    info "  VS Code: PORTS tab > Forward a Port > ${PORT}"
-    info "  Terminal on your computer: ssh -N -L ${PORT}:127.0.0.1:${PORT} ${USER}@$(echo "$SSH_CONNECTION" | awk '{print $3}')"
+    HOST_IP="$(echo "$SSH_CONNECTION" | awk '{print $3}')"
+    info "You are connected over SSH: the link opens on your own computer once port ${PORT} is forwarded."
+    info "  VS Code started from this folder forwards it by itself (see .vscode/settings.json)."
+    info "  To make it permanent, add this line to the workstation's entry in ~/.ssh/config on your computer:"
+    info "      LocalForward 127.0.0.1:${PORT} 127.0.0.1:${PORT}"
+    info "  One-off alternative, on your computer: ssh -N -L ${PORT}:127.0.0.1:${PORT} ${USER}@${HOST_IP}"
 fi
 
 # Add NucleiQuant to the Linux applications menu (once)
