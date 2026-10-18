@@ -21,19 +21,26 @@ The workflow, one screen per step:
    nearest the 10th/50th/90th percentile of a chosen channel per clone for training.
 3. **Crops**: a window per training image (auto-placed on marker-positive tissue,
    draggable), segmented with `stardist_haug2` using the full image's normalisation range.
-4. **Label**: the user clicks nuclei into categories. `Dead` and `Unstained` always exist;
-   the user adds the others and picks their colours (channel colours offered first).
-   Recommended: `labels_per_crop` (10) labels of each category in **each crop**, so dim,
-   typical and bright images weigh the same. Not enforced: the only hard requirement is two
-   labeled categories; a dialog lists shortfalls and lets the user continue
-   (`api.label_progress`).
+   A crop's image can be swapped (`replace_crop`, e.g. too faint to label). The test crops
+   (step 6) are picked and segmented in the same job.
+4. **Label**: the user clicks nuclei into categories. `Dead` and `Unstained` always exist
+   (defaults: dark grey / DAPI-blue); the user adds the others, names them (channel names
+   offered as quick picks), renames them (pencil) and picks their colours (channel colours
+   offered first). Recommended: `labels_per_crop` (15) labels of each category in **each
+   crop**, so dim, typical and bright images weigh the same. Not enforced: the only hard
+   requirement is two labeled categories; a dialog lists shortfalls and lets the user
+   continue (`api.label_progress`).
 5. **Preview**: random forest trained on the labels, tested leave-one-crop-out, every crop
-   recoloured by prediction; the user corrects and retrains, then validates.
-6. **Test** (optional, for papers): `test_images_per_clone` (2) random images per clone that
-   were *not* used for training get a smaller crop (`test_crop_fraction` 0.35); the user
-   labels `test_labels_per_crop` (5) cells per category per crop **blind** (no predictions
-   shown); `evaluate_test()` reports balanced accuracy, accuracy, Cohen's κ with 95 % CIs,
-   per category and per image, and a methods paragraph. Every evaluation is logged.
+   recoloured by prediction; legend chips show/hide one category; "What the classifier
+   measures" explains the features in plain words. The user corrects and retrains, then
+   **Accept classifier** validates and leads to the Test decision screen.
+6. **Test** (optional, for papers): the user decides to test or skip to Results.
+   `test_images_per_clone` (2) random images per clone that were *not* used for training
+   got a smaller crop (`test_crop_fraction` 0.35) during step 3; the user labels
+   `test_labels_per_crop` (15) cells per category per crop **blind** (no predictions
+   shown); `evaluate_test()` reports balanced accuracy, accuracy, Cohen's κ and macro F1
+   with 95 % CIs, per category and per image, plain-language explanations and a methods
+   paragraph. Every evaluation is logged.
 7. **Results**: every image segmented, measured, classified; Excel workbook, plots,
    Mann-Whitney / Kruskal-Wallis + Dunn statistics (organoid = unit), Fiji ROIs. Proportions
    are relative to a user-chosen **reference** ("100 %"): all nuclei, living cells, stained
@@ -143,8 +150,13 @@ test images are drawn **at random** per clone among images not in `selection`/`c
 (`survey.pick_test_images`, seed 0 → reproducible) so the test represents the experiment;
 crops are smaller (few cells needed); labels are stratified per category, so **balanced
 accuracy** (mean recall) is the headline; accuracy and recall/precision get Wilson CIs,
-balanced accuracy and κ bootstrap CIs over cells (cells within an image are correlated →
-CIs are slightly optimistic; documented). Test crops live in `project.json → test_crops`
+balanced accuracy, κ and macro F1 bootstrap CIs over cells (cells within an image are
+correlated → CIs are slightly optimistic; documented). Test crops are created by the
+crops job (`api._ensure_test_crops`: a test crop whose image enters the training selection
+is dropped with its labels — the Survey screen warns — and the clone is topped up with a
+fresh id, `next_test`). Feature/segmentation settings changes mark test crops stale like
+training crops; `validate_classifier` and `evaluate_test` refuse a stale classifier.
+Test crops live in `project.json → test_crops`
 (ids `testNN`); `Project.crop()` and `is_test_crop()` cover both lists; `set_label()` routes
 test crops to `test_annotations` and never marks the classifier stale. Sub-crops of
 training images were rejected (leakage); a second annotation of the same cells measures
@@ -206,6 +218,11 @@ equals scikit-image's regionprops.
   halo under outlines so any colour stays readable.
 - **Don't commit, tag or push**: the user does all git operations. Log every change set in
   `PROJECT.md` (why, what, weaknesses) and update this file and the user docs.
+- **Bump the version** (`nucleiquant/__init__.py` and `pyproject.toml`) for every version
+  entry in `PROJECT.md`: the sidebar, the home screen and the launcher show it, and the
+  page loads its files from `/static/<version>/`, so a reload after an update always gets
+  the new JavaScript instead of the browser's cached copy. Keep imports relative in
+  JS/CSS (the only absolute `/static/` links are in `index.html`, rewritten on serve).
 
 ## How to extend (recipes)
 
@@ -237,8 +254,8 @@ the numpy pin (Cellpose needs PyTorch: that means a different base image).
 
 **MCP server (planned)** — wrap `api.Session` methods as tools: `create_project`,
 `update_project`, `start_survey`, `survey_data`, `set_selection`, `start_crops`,
-`set_label`, `start_training`, `classifier_info`, `validate_classifier`, `start_batch`,
-`results`; poll jobs with `jobs.get`. Put it in `nucleiquant/mcp_server.py` using the
+`replace_crop`, `set_label`, `start_training`, `classifier_info`, `validate_classifier`,
+`start_batch`, `results`; poll jobs with `jobs.get`. Put it in `nucleiquant/mcp_server.py` using the
 official Python MCP SDK; no workflow logic in it.
 
 **V3 — per-marker (QuPath-style composite) classification (planned)** — one +/−
@@ -276,8 +293,9 @@ a project `mode` flag; categories become markers; `annotations.csv` gains a mark
   κ = 0.89, leave-one-crop-out accuracy 90.7 %; V2.0 protocol `--per-category 55`: 93.6 %,
   κ = 0.89, 93.6 %. See PROJECT.md for why the held-out accuracy differs).
 - `tests/e2e/run_walkthrough.sh`: real browser (Playwright container) clicks through all six
-  steps (incl. picking a category colour, per-crop labeling, the shortfall dialog, switching
-  the 100 % and saving one in Excel) and regenerates the documentation screenshots.
+  steps (incl. picking a category colour, per-crop labeling, the replace-crop dialog, the
+  shortfall dialog, the test decision screen, switching the 100 % and saving one in Excel)
+  and regenerates the documentation screenshots.
 - `tests/test_evaluation.py`: Wilson intervals, metrics, test-image selection.
 - `tests/e2e/check_modules.py`: imports every frontend module in Chromium — a syntax check
   without Node.js (run it after any JS edit; needs a running app).

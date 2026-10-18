@@ -1,8 +1,52 @@
 // Step 3 — Training crops: placement (draggable) and segmentation progress.
 import * as api from "../api.js";
-import { h, icon, errorToast, confirm, fmt, shortName, progressBar } from "../ui.js";
+import { h, icon, errorToast, confirm, modal, fmt, shortName, progressBar } from "../ui.js";
 
 let timer = null;
+
+// Pick a different image for a crop (e.g. one too faint to label)
+async function replaceDialog(ctx, crop, nLabels, onStarted) {
+  let data;
+  try { data = await api.get("/api/survey"); } catch (e) { errorToast(e); return; }
+  const p = ctx.store.state.project;
+  const used = new Set([
+    ...p.crops.map((c) => c.image),
+    ...(p.test_crops || []).map((c) => c.image),
+    ...p.selection.map((s) => s.image),
+  ]);
+  const clone = (crop.fields && crop.fields.clone) || "";
+  const ch = data.channel;
+  const chName = p.channels[ch] ? p.channels[ch].name : `Channel ${ch + 1}`;
+  const candidates = data.entries
+    .filter((e) => (e.group || "") === clone && !used.has(e.image))
+    .sort((a, b) => b.values[ch] - a.values[ch]);
+  if (!candidates.length) {
+    modal({ title: "No image left", text: `Every image of ${clone ? `clone ${clone}` : "this experiment"} is already used for training or testing.`,
+            actions: [{ label: "Close", kind: "primary" }] });
+    return;
+  }
+  const vmax = Math.max(1e-9, ...candidates.map((e) => e.values[ch]));
+  let m;
+  const rows = candidates.map((e) => {
+    const b = h("button", { class: "tr", type: "button", style: { display: "flex", alignItems: "center", gap: "12px", width: "100%", background: "none", border: "none", cursor: "pointer", color: "inherit", font: "inherit", textAlign: "left" } },
+      h("span", { style: { flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: e.image }, shortName(e.image, e.fields)),
+      h("span", { class: "bar", style: { width: "120px", height: "4px", flexShrink: "0" } },
+        h("span", { style: { width: `${Math.max(2, (100 * e.values[ch]) / vmax)}%`, background: "#F2C94C" } })),
+      h("span", { class: "mono muted", style: { width: "64px", textAlign: "right", fontSize: "12.5px" } }, fmt(e.values[ch], 1)));
+    b.addEventListener("click", async () => {
+      m.close();
+      if (nLabels && !(await confirm("Replace this crop?", `Its ${nLabels} labeled nuclei will be deleted.`, "Replace", true))) return;
+      try { await api.post(`/api/crops/${crop.id}/replace`, { image: e.image }); await ctx.refresh(); onStarted(); } catch (err) { errorToast(err); }
+    });
+    return b;
+  });
+  m = modal({
+    title: `Replace ${shortName(crop.image, crop.fields)}`,
+    text: `Pick another image${clone ? ` of clone ${clone}` : ""} — brightest in ${chName} first. The crop window is placed again and the new crop is segmented.`,
+    body: h("div", { style: { display: "flex", flexDirection: "column", gap: "2px", maxHeight: "320px", overflow: "auto" } }, ...rows),
+    actions: [{ label: "Cancel" }],
+  });
+}
 
 export async function render(root, ctx) {
   let version = Date.now();
@@ -22,8 +66,11 @@ export async function render(root, ctx) {
       const fields = c.fields;
       const nLabels = Object.values(st.labels.per_crop[c.id] || {}).reduce((a, b) => a + b, 0);
       const thumbBox = h("div", { class: "crop-thumb" });
+      const rep = h("button", { class: "btn ghost small", type: "button", disabled: !!job, style: { marginLeft: "auto" },
+                               title: "Use a different image for this crop (e.g. one too faint to label)" }, "Replace image…");
+      rep.addEventListener("click", () => replaceDialog(ctx, c, nLabels, () => { draw(); poll(); }));
       const body = h("div", { class: "crop-body" },
-        h("div", { style: { display: "flex", alignItems: "center", gap: "10px" } }, h("h2", {}, shortName(c.image, fields)), h("span", { class: "pill" }, c.role || "Manual")),
+        h("div", { style: { display: "flex", alignItems: "center", gap: "10px" } }, h("h2", {}, shortName(c.image, fields)), h("span", { class: "pill" }, c.role || "Manual"), rep),
         h("div", { class: "muted", style: { fontSize: "13px" } },
           c.w ? `${fmt(c.w)} × ${fmt(c.h)} px` + (c.pixel_size ? ` · ${fmt(c.w * c.pixel_size)} × ${fmt(c.h * c.pixel_size)} µm` : "") : c.image));
       const isRunning = job && job.message && job.message.startsWith(c.image);
@@ -83,6 +130,16 @@ export async function render(root, ctx) {
       }
     }
 
+    const testCrops = p.test_crops || [];
+    const testSec = !testCrops.length ? null : h("section", { class: "card pad", style: { display: "flex", flexDirection: "column", gap: "8px" } },
+      h("h2", { class: "card-title" }, "Test crops"),
+      h("div", { class: "faint", style: { fontSize: "12.5px" } },
+        "Prepared now so the optional accuracy test (after Preview) starts instantly. Drawn at random among the images not used for training."),
+      ...testCrops.map((c) => h("div", { style: { display: "flex", alignItems: "center", gap: "12px", fontSize: "13px" } },
+        c.status === "ready" ? icon("check", 15, { color: "#5BD68A", width: 2 }) : h("div", { class: "spinner" }),
+        h("span", { style: { flex: "1" } }, shortName(c.image, c.fields)),
+        h("span", { class: "muted" }, c.status === "ready" ? `${fmt(c.n_nuclei)} nuclei` : c.status === "running" ? "Segmenting…" : "Waiting…"))));
+
     root.append(
       h("header", { class: "header" },
         h("div", { class: "titles" }, h("h1", {}, "Training crops"),
@@ -91,6 +148,7 @@ export async function render(root, ctx) {
         start),
       h("div", { class: "content" },
         !p.crops.length ? h("div", { class: "card pad muted" }, "No crops yet. Pick training images on the Survey screen.") : grid,
+        testSec,
         h("div", { class: "status faint", style: { fontSize: "13px" } }, icon("info"),
           "Nuclei cut by a crop edge are shown greyed out and can't be labeled. They're counted normally in the full images.")));
   };
@@ -103,7 +161,8 @@ export async function render(root, ctx) {
         await ctx.refresh();
         const st = ctx.store.state;
         const running = (st.jobs || []).some((j) => j.kind === "crops" || j.kind === "crop");
-        const failed = st.project.crops.some((c) => c.status === "running") && !running;
+        const allCrops = [...st.project.crops, ...(st.project.test_crops || [])];
+        const failed = allCrops.some((c) => c.status === "running") && !running;
         if (JSON.stringify(st.project.crops.map((c) => c.status)) !== before) version = Date.now();
         draw();
         if (running) poll();
@@ -113,7 +172,9 @@ export async function render(root, ctx) {
   };
 
   const st = ctx.store.state;
-  const needsBuild = st.project.crops.some((c) => c.status !== "ready") || st.project.crops.length !== st.project.selection.length;
+  // Training crops out of sync with the selection, or any crop (test crops included) not ready
+  const needsBuild = [...st.project.crops, ...(st.project.test_crops || [])].some((c) => c.status !== "ready")
+    || st.project.crops.length !== st.project.selection.length;
   const running = (st.jobs || []).some((j) => j.kind === "crops" || j.kind === "crop");
   if (needsBuild && !running) {
     try { await api.post("/api/crops"); await ctx.refresh(); } catch (e) { errorToast(e); }

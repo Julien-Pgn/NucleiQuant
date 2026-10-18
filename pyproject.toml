@@ -1,6 +1,6 @@
 [project]
 name = "nucleiquant"
-version = "2.0.0"
+version = "2.3.0"
 description = "Count cell types in fluorescence images: StarDist nuclei segmentation, click-to-train random forest classification, Excel counts and statistics."
 readme = "Readme.md"
 requires-python = ">=3.10"

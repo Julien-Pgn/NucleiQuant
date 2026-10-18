@@ -48,6 +48,7 @@ const ICONS = {
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 17-5-5-9 8"/>',
   project: '<path d="M4 4h16v16H4z"/><path d="M4 9h16"/><path d="M9 20V9"/>',
+  edit: '<path d="M17 3.5a2.1 2.1 0 0 1 3 3L8.5 18 4 19.5 5.5 15z"/>',
 };
 
 export function icon(name, size = 16, opts = {}) {

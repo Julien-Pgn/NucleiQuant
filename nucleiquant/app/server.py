@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .. import __version__
 from ..api import ApiError, Session
 from ..contours import pack_outlines
 from ..jobs import JobManager
@@ -23,6 +24,15 @@ def create_app():
     session = Session(JobManager())
     app.state.session = session
     threading.Thread(target=session.detect_device, daemon=True).start()
+
+    @app.middleware("http")
+    async def revalidate_static(request: Request, call_next):
+        # Browsers must check for a newer app version on every load (ETag makes it cheap);
+        # without this they keep old JavaScript for days after an update
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.exception_handler(ApiError)
     def api_error(_: Request, exc: ApiError):
@@ -39,8 +49,13 @@ def create_app():
     # ---- app shell ---------------------------------------------------------------
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-store"})
+        # The page links its files under a per-version path, so a browser can never
+        # mix a new version with files it cached from an older one
+        with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as f:
+            html = f.read().replace("/static/", f"/static/{__version__}/")
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
+    app.mount(f"/static/{__version__}", StaticFiles(directory=STATIC), name="static-versioned")
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     @app.get("/api/health")
@@ -137,6 +152,10 @@ def create_app():
     @app.post("/api/crops/{crop_id}/move")
     def move_crop(crop_id: str, y: int = Body(...), x: int = Body(...)):
         return session.move_crop(crop_id, y, x)
+
+    @app.post("/api/crops/{crop_id}/replace")
+    def replace_crop(crop_id: str, image: str = Body(..., embed=True)):
+        return session.replace_crop(crop_id, image)
 
     @app.get("/api/crops/{crop_id}/thumb")
     def crop_thumb(crop_id: str):

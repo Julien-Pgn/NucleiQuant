@@ -14,6 +14,9 @@ PORT="${NQ_PORT:-8765}"
 URL="http://localhost:${PORT}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OS="$(uname -s)"
+# The app's version (shown so you know which one you are running)
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$REPO/nucleiquant/__init__.py" 2>/dev/null)"
+APP_NAME="${APP_NAME}${VERSION:+ ${VERSION}}"
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }

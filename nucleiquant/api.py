@@ -256,6 +256,7 @@ class Session:
         with p.lock:
             d = p.data
             reset_crops = False
+            reset_test_crops = False
             if "name" in changes and changes["name"].strip():
                 d["name"] = changes["name"].strip()
             if "channels" in changes:
@@ -295,10 +296,16 @@ class Session:
                         v = str(v)
                     if k in ("norm_low", "norm_high", "ring_radius", "perinuclear_radius", "texture_levels", "crop_fraction") and v != old:
                         reset_crops = True
+                    if k == "test_crop_fraction" and v != old:
+                        reset_test_crops = True
                     d["settings"][k] = v
             if reset_crops:
                 d["survey"]["done"] = d["survey"].get("done", False) and "nuclear_channel" not in changes
                 for c in d["crops"]:
+                    c["status"] = "stale"
+            if reset_crops or reset_test_crops:
+                # Test crops share the features/segmentation settings: rebuild them too
+                for c in d.get("test_crops", []):
                     c["status"] = "stale"
             p.save()
         return self.state()
@@ -428,48 +435,126 @@ class Session:
                     n += 1
             p.data["next_crop"] = n
             p.save()
-        todo = [c for c in p.data["crops"] if c.get("status") != "ready"]
-        for k, c in enumerate(todo):
+        # Test crops are prepared in the same job, so the Test step is instant later
+        self._ensure_test_crops(p)
+        todo = ([(c, False) for c in p.data["crops"] if c.get("status") != "ready"]
+                + [(c, True) for c in p.data.get("test_crops", []) if c.get("status") != "ready"])
+        for k, (c, is_test) in enumerate(todo):
             if c.get("status") == "stale":
                 # Segmentation will change: labels on this crop no longer apply
-                self.annotations = {key: v for key, v in self.annotations.items() if key[0] != c["id"]}
-                self._save_annotations()
+                if is_test:
+                    self.test_annotations = {key: v for key, v in self.test_annotations.items() if key[0] != c["id"]}
+                    self._save_annotations("test")
+                else:
+                    self.annotations = {key: v for key, v in self.annotations.items() if key[0] != c["id"]}
+                    self._save_annotations()
             c["status"] = "running"
 
-            def prog(msg, frac, k=k, c=c):
-                job.update((k + frac) / len(todo), f"{c['image']}: {msg}")
+            def prog(msg, frac, k=k, c=c, is_test=is_test):
+                job.update((k + frac) / len(todo), f"{'Test crop · ' if is_test else ''}{c['image']}: {msg}")
 
-            crops.build_crop(p, c, self._survey_entry(c["image"]), prog)
+            crops.build_crop(p, c, self._survey_entry(c["image"]), prog,
+                             folder="test" if is_test else "training",
+                             fraction=float(p.settings["test_crop_fraction"]) if is_test else None)
             self._features.pop(c["id"], None)
             self.predictions.pop(c["id"], None)
             with p.lock:
                 p.save()
         return {"n": len(p.data["crops"])}
 
+    def _ensure_test_crops(self, p):
+        """Keep the test set complete: drop test crops whose image is now used for
+        training, then top every clone up to `test_images_per_clone` with new ids."""
+        with p.lock:
+            training = {c["image"] for c in p.data["crops"]} | {x["image"] for x in p.data["selection"]}
+            kept = []
+            for c in p.data.get("test_crops", []):
+                if c["image"] in training:
+                    crops.remove_crop_files(p, c["id"], "test")
+                    self.test_annotations = {k: v for k, v in self.test_annotations.items() if k[0] != c["id"]}
+                    self._save_annotations("test")
+                    self._features.pop(c["id"], None)
+                else:
+                    kept.append(c)
+            names = [i["image"] for i in self.files() if "fields" in i]
+            picks = survey.pick_test_images(names, training, self._group_of, int(p.settings["test_images_per_clone"]),
+                                            keep=[c["image"] for c in kept])
+            n = p.data.get("next_test", max([int(c["id"][4:]) for c in kept if c["id"][4:].isdigit()] + [0]) + 1)
+            for im in picks:
+                kept.append({"id": f"test{n:02d}", "image": im, "role": "Test", "status": "queued"})
+                n += 1
+            p.data["next_test"] = n
+            p.data["test_crops"] = kept
+            p.save()
+
     def _drop_crop(self, p, crop_id):
+        """Remove a training crop's files and labels; the classifier no longer matches."""
         crops.remove_crop_files(p, crop_id)
-        self.annotations = {k: v for k, v in self.annotations.items() if k[0] != crop_id}
-        self._save_annotations()
+        if any(k[0] == crop_id for k in self.annotations):
+            self.annotations = {k: v for k, v in self.annotations.items() if k[0] != crop_id}
+            self._save_annotations()
+            self._invalidate_training(p)
         self._features.pop(crop_id, None)
         self.predictions.pop(crop_id, None)
 
     def move_crop(self, crop_id, y, x):
         p = self._require()
         c = p.crop(crop_id)
+        if p.is_test_crop(crop_id):
+            raise ApiError("Test crops are placed automatically and can't be moved.")
 
         def run(job):
-            c["y"], c["x"] = int(y), int(x)
-            c["status"] = "running"
-            self.annotations = {k: v for k, v in self.annotations.items() if k[0] != crop_id}
-            self._save_annotations()
+            with p.lock:
+                c["y"], c["x"] = int(y), int(x)
+                c["status"] = "running"
+                self._drop_crop(p, crop_id)
+                p.save()
             crops.build_crop(p, c, self._survey_entry(c["image"]), lambda m, f: job.update(f, m))
-            self._features.pop(crop_id, None)
-            self.predictions.pop(crop_id, None)
             with p.lock:
                 p.save()
             return {"id": crop_id}
 
         return self.jobs.submit("crop", "Moving crop", run)
+
+    def _check_replacement(self, p, c, image):
+        if not any(e["image"] == image for e in self._survey_entries()):
+            raise ApiError("This image isn't part of the survey.")
+        used = ({x["image"] for x in p.data["crops"] if x["id"] != c["id"]}
+                | {x["image"] for x in p.data.get("test_crops", [])}
+                | {x["image"] for x in p.data["selection"] if x["image"] != c["image"]})
+        if image in used:
+            raise ApiError("This image is already used by another crop.")
+
+    def replace_crop(self, crop_id, image):
+        """Swap the image behind a training crop (e.g. one too faint to label)."""
+        p = self._require()
+        c = p.crop(crop_id)
+        if p.is_test_crop(crop_id):
+            raise ApiError("Test crops are drawn at random and can't be replaced.")
+        self._check_replacement(p, c, image)
+
+        def run(job):
+            with p.lock:
+                # Checked again: a job queued before this one may have changed the project
+                if not any(x is c for x in p.data["crops"]):
+                    raise ApiError("This crop was removed in the meantime.")
+                self._check_replacement(p, c, image)
+                old_image = c["image"]
+                self._drop_crop(p, crop_id)
+                # Position and size are found again on the new image
+                for key in ("y", "x", "h", "w", "n_nuclei", "n_edge", "built"):
+                    c.pop(key, None)
+                c.update({"image": image, "role": "Manual", "status": "running"})
+                for s in p.data["selection"]:
+                    if s["image"] == old_image:
+                        s["image"], s["role"] = image, "Manual"
+                p.save()
+            crops.build_crop(p, c, self._survey_entry(image), lambda m, f: job.update(f, m))
+            with p.lock:
+                p.save()
+            return {"id": crop_id}
+
+        return self.jobs.submit("crop", "Replacing crop", run)
 
     def crop_file(self, crop_id, kind):
         p = self._require()
@@ -633,16 +718,9 @@ class Session:
 
     def _run_test_crops(self, job, p):
         s = p.settings
-        with p.lock:
-            if not p.data.get("test_crops"):
-                names = [i["image"] for i in self.files() if "fields" in i]
-                training = {c["image"] for c in p.data["crops"]} | {x["image"] for x in p.data["selection"]}
-                picks = survey.pick_test_images(names, training, self._group_of, int(s["test_images_per_clone"]))
-                if not picks:
-                    raise ApiError("No images left for testing: every image is used for training.")
-                p.data["test_crops"] = [{"id": f"test{k + 1:02d}", "image": im, "role": "Test", "status": "queued"}
-                                        for k, im in enumerate(picks)]
-                p.save()
+        self._ensure_test_crops(p)
+        if not p.data.get("test_crops"):
+            raise ApiError("No images left for testing: every image is used for training.")
         todo = [c for c in p.data["test_crops"] if c.get("status") != "ready"]
         for k, c in enumerate(todo):
             if c.get("status") == "stale":
@@ -665,7 +743,10 @@ class Session:
         p = self._require()
         if self.classifier is None:
             raise ApiError("Train the classifier first (Preview).")
+        if p.data["classifier"].get("stale"):
+            raise ApiError("Your training labels changed since the last training. Retrain on the Preview screen, then evaluate.")
         y_true, y_pred, per_crop = [], [], []
+        per_crop_cat = []
         for c in p.data.get("test_crops", []):
             labs = {lab: cat for (cid, lab), cat in self.test_annotations.items() if cid == c["id"]}
             if c.get("status") != "ready" or not labs:
@@ -679,21 +760,28 @@ class Session:
             ok = sum(a == b for a, b in zip(truth, pred))
             per_crop.append({"crop_id": c["id"], "image": c["image"], "n": len(truth), "correct": int(ok),
                              "accuracy": ok / len(truth), "accuracy_ci": evaluation.wilson(ok, len(truth))})
+            per_crop_cat += [truth.count(cat) for cat in set(truth)]
         if len(y_true) < 2:
             raise ApiError("Label some cells in the test crops first.")
         cats = [c["id"] for c in p.categories]
         metrics = evaluation.evaluate(y_true, y_pred, cats)
         info = self.classifier.info
-        groups = {self._group_of(c["image"]) for c in p.data["test_crops"]}
+        # What was actually tested (the set may differ from the settings after changes)
+        per_group = {}
+        for c in per_crop:
+            g = self._group_of(c["image"])
+            per_group[g] = per_group.get(g, 0) + 1
+        counts = sorted(per_group.values())
         report = {
             "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
             "classifier_hash": info["hash"],
             "metrics": metrics,
             "per_crop": per_crop,
             "n_images": len(per_crop),
-            "n_images_per_group": int(p.settings["test_images_per_clone"]),
-            "n_groups": len(groups),
+            "n_images_per_group": counts[0] if counts[0] == counts[-1] else f"{counts[0]}–{counts[-1]}",
+            "n_groups": len(per_group),
             "labels_per_crop": int(p.settings["test_labels_per_crop"]),
+            "labels_per_crop_range": [min(per_crop_cat), max(per_crop_cat)],
             "n_training_labels": info["n_labels"],
             "n_training_crops": len([c for c in p.data["crops"] if c.get("status") == "ready"]),
             "n_trees": info["n_trees"], "n_features": info["n_features"],
@@ -800,6 +888,8 @@ class Session:
         p = self._require()
         if self.classifier is None:
             raise ApiError("Train the classifier first.")
+        if p.data["classifier"].get("stale"):
+            raise ApiError("Your labels changed since the last training. Retrain on the Preview screen first.")
         with p.lock:
             p.data["classifier"]["validated"] = True
             p.save()

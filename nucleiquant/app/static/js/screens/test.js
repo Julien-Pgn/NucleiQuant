@@ -5,6 +5,8 @@ import * as label from "./label.js";
 
 let timer = null;
 let delegated = false;
+// Set when the user asked to start the test: the progress screen then opens the labeling
+let startRequested = false;
 
 const pct = (v, d = 1) => (v == null ? "–" : `${(100 * v).toFixed(d)} %`);
 const ci = (pair) => (!pair || pair[0] == null ? "" : `${(100 * pair[0]).toFixed(0)}–${(100 * pair[1]).toFixed(0)} %`);
@@ -14,43 +16,72 @@ export async function render(root, ctx, route, params) {
   if (params && params[0] === "report") return renderReport(root, ctx);
   const st = ctx.store.state;
   const tc = st.project.test_crops || [];
-  const running = (st.jobs || []).some((j) => j.kind === "test");
-  if (!tc.length && !running) return renderIntro(root, ctx);
-  if (running || tc.some((c) => c.status !== "ready")) return renderProgress(root, ctx);
-  delegated = true;
-  return label.render(root, ctx, "test");
+  // Test crops are normally built together with the training crops
+  const running = (st.jobs || []).some((j) => j.kind === "test" || j.kind === "crops");
+  const ready = tc.length > 0 && tc.every((c) => c.status === "ready");
+  if (!ready) {
+    if (running || tc.length) return renderProgress(root, ctx);
+    return renderDecision(root, ctx);
+  }
+  const labeled = (st.test_labels && st.test_labels.total) || 0;
+  if ((params && params[0] === "label") || labeled > 0 || st.test) {
+    delegated = true;
+    return label.render(root, ctx, "test");
+  }
+  return renderDecision(root, ctx);
 }
 
 function header(title, sub, ...right) {
   return h("header", { class: "header" }, h("div", { class: "titles" }, h("h1", {}, title), sub ? h("p", {}, sub) : null), ...right);
 }
 
-function renderIntro(root, ctx) {
+function renderDecision(root, ctx) {
   const st = ctx.store.state;
   const s = st.project.settings;
   const clones = st.files.clones.length || 1;
-  const nImg = s.test_images_per_clone * clones;
+  const tc = st.project.test_crops || [];
+  const nImg = tc.length || s.test_images_per_clone * clones;
   const nCats = st.project.categories.length;
   const cells = nImg * nCats * s.test_labels_per_crop;
+  const n = st.files.n;
   root.innerHTML = "";
-  const go = h("button", { class: "btn primary", type: "button" }, "Create test crops", icon("arrow", 16, { width: 2 }));
+  const stale = !!st.project.classifier.stale;
+  const go = h("button", { class: "btn primary", type: "button" }, "Start blind labeling", icon("arrow", 16, { width: 2 }));
   go.addEventListener("click", async () => {
     go.disabled = true;
+    startRequested = true;
+    if (tc.length) { ctx.navigate("test/label"); return; }
     try { await api.post("/api/test/crops"); await ctx.refresh(); ctx.navigate("test"); } catch (e) { errorToast(e); go.disabled = false; }
+  });
+  const done = st.project.batch.done;
+  const skip = h("button", { class: "btn", type: "button", disabled: stale && !done, title: stale && !done ? "Retrain on the Preview screen first" : null },
+    done ? "Go to results" : `Skip — classify all ${n} images`);
+  skip.addEventListener("click", async () => {
+    if (done) { ctx.navigate("results"); return; }
+    skip.disabled = true;
+    try {
+      await api.post("/api/classifier/validate");
+      await api.post("/api/batch");
+      ctx.navigate("results");
+    } catch (e) { errorToast(e); skip.disabled = false; }
   });
   const point = (t, d) => h("li", { style: { display: "flex", gap: "12px" } },
     icon("check", 18, { color: "#5BD68A", width: 2 }), h("span", { class: "muted", style: { lineHeight: "1.55" } }, h("span", { style: { color: "#EDEEF0", fontWeight: "500" } }, t), " ", d));
   root.append(
-    header("Test set", "Measure how accurate the classifier is on images it never saw — the number to report.", go),
-    h("div", { class: "content" }, h("div", { style: { display: "flex", gap: "32px", alignItems: "flex-start" } },
+    header("Test the classifier?", "Optional, but recommended for papers: accuracy on images the classifier never saw, labeled blind. You can also skip straight to the results.", skip, go),
+    h("div", { class: "content" },
+      stale ? h("div", { class: "banner", style: { flexDirection: "row", alignItems: "center" } },
+        h("span", { style: { flex: "1" } }, "Your labels changed since the last training. Retrain on the Preview screen before testing or classifying."),
+        h("a", { class: "btn small", href: "#/preview" }, "Go to Preview")) : null,
+      h("div", { style: { display: "flex", gap: "32px", alignItems: "flex-start" } },
       h("section", { class: "card pad", style: { flex: "1", maxWidth: "720px", display: "flex", flexDirection: "column", gap: "16px" } },
         h("h2", { class: "card-title" }, "How the test works"),
         h("ul", { style: { margin: "0", padding: "0", listStyle: "none", display: "flex", flexDirection: "column", gap: "12px", fontSize: "14px" } },
-          point("Independent images.", `${s.test_images_per_clone} image${s.test_images_per_clone > 1 ? "s" : ""} per clone are drawn at random among the images not used for training, and a smaller crop is cut from each.`),
+          point("Independent images.", `${s.test_images_per_clone} image${s.test_images_per_clone > 1 ? "s" : ""} per clone ${tc.length ? "were" : "are"} drawn at random among the images not used for training, and a smaller crop ${tc.length ? "was" : "is"} cut from each${tc.length ? " (already prepared with the training crops)" : ""}.`),
           point("Blind labeling.", "You label test cells exactly like training cells, but the classifier's answers are hidden, so they can't influence you."),
           point("A few cells per category.", `${s.test_labels_per_crop} of each category in each test crop is recommended — about ${cells} test cells here.`),
           point("Never used for training.", "Test labels are stored apart. Retraining never sees them."),
-          point("A report for reviewers.", "Balanced accuracy, accuracy and Cohen's κ with 95 % confidence intervals, per category and per image, the confusion matrix, and a methods paragraph. Every evaluation is logged.")),
+          point("A report for reviewers.", "Balanced accuracy, accuracy, Cohen's κ and macro F1 with 95 % confidence intervals, per category and per image, the confusion matrix, and a methods paragraph. Every evaluation is logged.")),
         h("div", { class: "banner" }, "Label the test crops once your training labels are final, and evaluate once. If you then change the training, evaluate again: the report keeps the history, so it stays transparent.")),
       h("aside", { class: "card pad", style: { width: "320px", display: "flex", flexDirection: "column", gap: "10px" } },
         h("h2", { class: "card-title" }, "Settings"),
@@ -58,7 +89,8 @@ function renderIntro(root, ctx) {
           `Test images per clone: ${s.test_images_per_clone}`, h("br"),
           `Test crop size: ${Math.round(s.test_crop_fraction * 100)} % of the image side`, h("br"),
           `Recommended labels: ${s.test_labels_per_crop} per category per crop`),
-        h("div", { class: "faint", style: { fontSize: "12.5px", lineHeight: "1.5" } }, "Change them in Project › Advanced settings before creating the test crops."),
+        h("div", { class: "faint", style: { fontSize: "12.5px", lineHeight: "1.5" } },
+          "Set in Project › Advanced settings. Changing the crop size later rebuilds the test crops (their labels are removed); the number of images per clone applies when crops are next updated."),
         h("div", { class: "faint", style: { fontSize: "12.5px", lineHeight: "1.5" } },
           `Precision to expect: with 100 test cells and a true accuracy of 90 %, the 95 % interval is about ±6 %; with 20 cells of a category, its accuracy is known to about ±15 %.`)))));
 }
@@ -76,7 +108,7 @@ function renderProgress(root, ctx) {
     try {
       await ctx.refresh();
       const st = ctx.store.state;
-      const job = (st.jobs || []).find((j) => j.kind === "test");
+      const job = (st.jobs || []).find((j) => j.kind === "test" || j.kind === "crops");
       if (job) {
         bar.firstChild.style.width = `${Math.max(2, job.progress * 100)}%`;
         msg.textContent = job.message || "Working…";
@@ -84,13 +116,19 @@ function renderProgress(root, ctx) {
         return;
       }
       const tc = st.project.test_crops || [];
-      if (tc.length && tc.every((c) => c.status === "ready")) { ctx.navigate("test"); return; }
+      if (tc.length && tc.every((c) => c.status === "ready")) {
+        const next = startRequested ? "test/label" : "test";
+        startRequested = false;
+        ctx.navigate(next);
+        return;
+      }
       if (tc.some((c) => c.status !== "ready") && !retried) {
         retried = true;
         await api.post("/api/test/crops");
         timer = setTimeout(poll, 800);
         return;
       }
+      if (!tc.length) { ctx.navigate("test"); return; }
       errorToast(new Error("Creating the test crops failed. See the log window."));
     } catch (e) { errorToast(e); }
   };
@@ -110,10 +148,23 @@ async function renderReport(root, ctx) {
   copy.addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(r.methods_text); toast("Methods text copied"); } catch (e) { toast("Select the text below and copy it"); }
   });
-  const again = h("button", { class: "btn primary", type: "button" }, icon("refresh", 16), "Evaluate again");
+  const again = h("button", { class: "btn", type: "button" }, icon("refresh", 16), "Evaluate again");
   again.addEventListener("click", async () => {
     again.disabled = true;
     try { await api.post("/api/test/evaluate"); await ctx.refresh(); ctx.navigate("test/report"); } catch (e) { errorToast(e); again.disabled = false; }
+  });
+  const done = st.project.batch.done;
+  const staleClf = !!st.project.classifier.stale;
+  const onward = h("button", { class: "btn primary", type: "button", disabled: staleClf && !done, title: staleClf && !done ? "Retrain on the Preview screen first" : null },
+    done ? "Results" : `Classify all ${st.files.n} images`, icon("arrow", 16, { width: 2 }));
+  onward.addEventListener("click", async () => {
+    if (done) { ctx.navigate("results"); return; }
+    onward.disabled = true;
+    try {
+      await api.post("/api/classifier/validate");
+      await api.post("/api/batch");
+      ctx.navigate("results");
+    } catch (e) { errorToast(e); onward.disabled = false; }
   });
   const tile = (l, v, s) => h("div", { class: "card tile" }, h("span", { class: "l" }, l), h("span", { class: "v" }, v), h("span", { class: "s" }, s));
   const perCat = h("section", { class: "card", style: { overflow: "hidden" } },
@@ -153,23 +204,34 @@ async function renderReport(root, ctx) {
     h("div", { style: { display: "flex", alignItems: "center" } }, h("h2", { class: "card-title", style: { flex: "1" } }, "Methods text"), copy),
     h("p", { style: { fontSize: "13.5px", lineHeight: "1.65", color: "#A3A9B1", userSelect: "text" } }, r.methods_text),
     h("div", { class: "faint", style: { fontSize: "12px" } }, "A starting point: check the numbers and adapt the wording to your paper."));
+  const explain = h("section", { class: "card pad", style: { display: "flex", flexDirection: "column", gap: "8px" } },
+    h("h2", { class: "card-title" }, "What the numbers mean"),
+    ...[
+      ["Balanced accuracy", "the average of each category's recall (the share of its test cells called correctly). Every category counts the same, however many test cells it has — the headline number here."],
+      ["Accuracy", "the share of all test cells called correctly. It follows the mix of cells in the test set, so a large category weighs more."],
+      ["Macro F1", "F1 combines recall with precision (how often a call of that category is right) for each category; the macro average weighs every category equally. Useful when you labeled different numbers of cells per category."],
+      ["Cohen's κ", "agreement between your labels and the classifier beyond what chance alone would give. 0 means chance level, 1 perfect; above 0.8 is usually called excellent."],
+      ["Training (for comparison)", "accuracy on the training crops, each crop held out in turn while training on the others. It is measured on different cells than the test, so it can be a little lower or higher — both numbers carry uncertainty. Training labels often include the hard cells you corrected, so a somewhat lower training number is normal."],
+    ].map(([t, d]) => h("div", { style: { fontSize: "12.5px", lineHeight: "1.55" } },
+      h("span", { style: { color: "#EDEEF0", fontWeight: "500" } }, `${t}: `), h("span", { class: "muted" }, d))));
   root.append(
     header("Test accuracy", `${m.n} test cells from ${r.n_images} image${r.n_images > 1 ? "s" : ""} never used for training · evaluated ${new Date(r.date).toLocaleString()}`,
-      h("a", { class: "btn", href: "#/test" }, "Test labels"), again),
+      h("a", { class: "btn", href: "#/test" }, "Test labels"), again, onward),
     h("div", { class: "content" },
       r.stale ? h("div", { class: "banner", style: { flexDirection: "row", alignItems: "center" } },
         h("span", { style: { flex: "1" } }, "The classifier changed since this evaluation. Evaluate again to measure the current one (the history keeps both)."), again.cloneNode(true)) : null,
       h("div", { class: "tiles" },
         tile("Balanced accuracy", pct(m.balanced_accuracy), `95 % CI ${ci(m.balanced_accuracy_ci)} · mean over categories`),
         tile("Accuracy on test cells", pct(m.accuracy), `95 % CI ${ci(m.accuracy_ci)}`),
+        tile("Macro F1", m.macro_f1 == null ? "–" : m.macro_f1.toFixed(2), m.macro_f1_ci && m.macro_f1_ci[0] != null ? `95 % CI ${m.macro_f1_ci[0].toFixed(2)}–${m.macro_f1_ci[1].toFixed(2)}` : "mean F1 over categories"),
         tile("Cohen's κ", m.kappa == null ? "–" : m.kappa.toFixed(2), m.kappa_ci && m.kappa_ci[0] != null ? `95 % CI ${m.kappa_ci[0].toFixed(2)}–${m.kappa_ci[1].toFixed(2)}` : ""),
         tile("Training (for comparison)", pct(r.cv_accuracy), `leave-one-crop-out on ${r.n_training_labels} training labels`)),
       h("div", { style: { display: "flex", gap: "20px", alignItems: "flex-start" } },
-        h("div", { style: { flex: "1.4", display: "flex", flexDirection: "column", gap: "20px", minWidth: "0" } }, perCat, methods),
+        h("div", { style: { flex: "1.4", display: "flex", flexDirection: "column", gap: "20px", minWidth: "0" } }, perCat, methods, explain),
         h("div", { style: { flex: "1", display: "flex", flexDirection: "column", gap: "20px", minWidth: "0" } }, conf, perImg, hist)),
       h("div", { class: "faint", style: { fontSize: "12.5px", lineHeight: "1.6" } },
         "Test cells are picked per category, so the balanced accuracy is the fairest single number. Intervals treat cells as independent; cells from the same image are somewhat alike, so the true uncertainty is a little larger. Everything here is also in the Excel file, sheet “test_set”.")));
-  const againClone = root.querySelector(".banner .btn.primary");
+  const againClone = root.querySelector(".banner .btn");
   if (againClone) againClone.addEventListener("click", () => again.click());
 }
 

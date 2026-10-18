@@ -90,8 +90,13 @@ densest, so each crop contains positive cells, negative cells and some dead cell
 
 - **Drag the yellow frame** to move a crop; it is segmented again (its labels, if any, are
   removed).
+- **Replace image…** swaps the crop for another image of the same clone — useful when an
+  image turns out too faint to label. The list shows the remaining images, brightest first.
 - Nuclei touching the edge of a crop are cut in two: you'll see them greyed out and can't
   label them. They are counted normally in the full images.
+
+The **test crops** for the optional accuracy test (step 6) are prepared in the same run,
+so that step starts instantly later.
 
 Click **Start labeling** when all crops are ready.
 
@@ -102,9 +107,11 @@ Click **Start labeling** when all crops are ready.
 This is where you teach NucleiQuant your cell types.
 
 **Categories.** *Dead* and *Unstained* are always there. Click **Add** to create your own
-categories (e.g. `PAX6+`, `BRN2+`). A cell gets exactly one category, so if cells can
-carry two markers and you want to count them, make a category for them (e.g.
-`PAX6+BRN2+`). Double-click a name to rename it.
+categories (e.g. `PAX6+`, `BRN2+`): type a name, or click one of your **channel names**
+below the box to use it (with the channel's colour). A cell gets exactly one category, so
+if cells can carry two markers and you want to count them, make a category for them (e.g.
+`PAX6+BRN2+`). Click the pencil (or double-click the name) to rename a category at any
+time; its labels keep working.
 
 **Colours.** Click a category's colour square (or, when adding one, the square next to its
 name) to choose its colour. The first row offers **your channel colours by name**, so
@@ -123,21 +130,21 @@ nuclei in the image.
 | Remove a label | right-click it, or click it again with the same category, or press **E** (erase mode) and click |
 | Zoom | mouse wheel, or the – / + buttons; **F** fits the image |
 | Move around | drag the image |
-| See the image without outlines | hold **H** |
+| See the image without the segmentation masks | hold **H** |
 | Next / previous crop | **]** / **[**, or click in the strip below the image |
 
 **Channels.** The eye shows or hides a channel; the slider sets its contrast (like ImageJ's
 Brightness & Contrast). **Auto contrast** resets. These settings only change the display,
 never the measurements.
 
-**How many labels?** The recommendation is **10 of each category in every crop** — that is
-30 per category per clone (3 crops per clone). The counter next to each category shows *this
-crop's* count (e.g. `7 / 10`, green tick at 10) and, below, the total in all crops; the strip
-of crops shows each crop's progress (`40 / 50`). Labeling the same amount in every crop keeps
+**How many labels?** The recommendation is **15 of each category in every crop** — that is
+45 per category per clone (3 crops per clone). The counter next to each category shows *this
+crop's* count (e.g. `7 / 15`, green tick at 15) and, below, the total in all crops; the strip
+of crops shows each crop's progress (`40 / 75`). Labeling the same amount in every crop keeps
 dim, typical and bright images equally represented, which is what makes the classifier
 robust to staining variation.
 
-It is a recommendation, not a rule: a crop may simply not contain 10 cells of a category.
+It is a recommendation, not a rule: a crop may simply not contain 15 cells of a category.
 Label what you find and move on. When you click **Preview classification** before every
 crop is complete, NucleiQuant lists what is missing where, and you can **Keep labeling** or
 **Preview anyway**. The only requirement is that at least two categories have labels. A
@@ -162,15 +169,24 @@ every nucleus of every crop is outlined in the colour of its predicted category.
   90 % is typical for clear stainings.
 - **Where it gets confused** shows which categories are mixed up (rows: your label;
   columns: the prediction) and which measurements the classifier relies on most.
+- **What the classifier measures** lists, in plain words, everything the classifier sees
+  for each nucleus: size and shape, brightness per channel (also rescaled to the image's
+  staining range), centre vs rim, the signal around the nucleus, contrasts, channel
+  combinations, texture and crowding. The position of a nucleus in the image is
+  deliberately *not* used.
 
 ![Confusion matrix](images/06b-preview-confusion.png)
 
 - **Uncertain cells only** (key **U**) shows only nuclei the classifier isn't sure about
   (probability below 60 %). These are the best ones to label next.
+- **Click a category in the legend** (top right) to hide or show it — useful to check one
+  category at a time in a crowded crop.
 - To **correct** a mistake: select the right category (keys 1–9) and click the nucleus. Then
   click **Retrain** (key **R**); the colours update.
 
-When the preview looks right, click **Classify all images**.
+When the preview looks right, click **Accept classifier**. You land on the Test step,
+where you choose: test the classifier on fresh images first (recommended for papers), or
+skip straight to classifying all images.
 
 ## 6. Test
 
@@ -180,23 +196,35 @@ The accuracy on the Preview screen is measured on your *training* crops (each cr
 left out). Reviewers usually ask for more: an accuracy measured on **images the classifier
 never saw**, labeled **without seeing its answers**. The Test step does exactly that.
 
-1. **Create test crops.** NucleiQuant draws 2 images per clone at random among the images
-   not used for training (random, so that the test represents the whole experiment), and
-   cuts a smaller crop from each (35 % of the image side).
+1. **Decide.** After accepting the classifier you land here. The test crops were already
+   prepared with the training crops: 2 images per clone, drawn at random among the images
+   not used for training (random, so that the test represents the whole experiment), a
+   smaller crop cut from each (35 % of the image side). Click **Start blind labeling** —
+   or **Skip** to go straight to the results; you can come back any time.
 2. **Label them blind.** The screen looks like the Label screen, but the classifier's
-   predictions are never shown. Label about **5 cells of each category in each test crop**.
+   predictions are never shown. Label about **15 cells of each category in each test crop**.
    Don't hunt for easy or hard cells: label what you are sure of, as you would anywhere.
    Test labels are stored apart and are **never used for training**.
-3. **Evaluate accuracy.** The report opens.
+3. **Evaluate accuracy.** The report opens; from there, **Classify all images** continues
+   to the results.
 
 ![Test report](images/11-test-report.png)
 
 **Reading the report**
 
 - **Balanced accuracy** — the mean of the per-category accuracies (recall). Because test
-  cells are picked per category (5 of each), this is the fairest single number.
-- **Accuracy on test cells** and **Cohen's κ** (agreement corrected for chance: above 0.8 is
-  usually called excellent).
+  cells are picked per category, this is the fairest single number.
+- **Accuracy on test cells** — the share of all test cells called correctly; it follows the
+  mix of cells in your test set.
+- **Macro F1** — combines recall with precision for each category and averages them with
+  equal weight; useful when you labeled different numbers of cells per category.
+- **Cohen's κ** — agreement between your labels and the classifier beyond what chance alone
+  would give (0 = chance, 1 = perfect; above 0.8 is usually called excellent).
+- **Training (for comparison)** — the leave-one-crop-out accuracy from the Preview screen.
+  It is measured on different cells (the training crops), so it can sit a little below or
+  above the test accuracy; training labels often include the hard cells you corrected, so a
+  somewhat lower training number is normal. The report explains each number under
+  **What the numbers mean**.
 - **95 % confidence intervals** for all of them — the range the true value probably lies in.
   They shrink with more test cells: with 100 test cells and a true accuracy of 90 %, about
   ±6 %; with 20 cells of one category, that category's accuracy is known to about ±15 %.
@@ -211,7 +239,11 @@ never saw**, labeled **without seeing its answers**. The Test step does exactly 
 **Good practice.** Finish your training labels first, then label the test crops and
 evaluate once. If the test shows a weak category, you can label more *training* cells and
 retrain — then evaluate again and report both (the history keeps them). Never copy test
-cells into training.
+cells into training. If you pick a test image for training on the Survey screen,
+NucleiQuant warns you: its test crop and blind labels are removed and another test image
+is drawn for that clone. Changing the measurement settings or the test crop size rebuilds
+the test crops (their labels are removed), and a classifier whose labels changed must be
+retrained before it can be tested or applied.
 
 ## 7. Results
 
@@ -297,11 +329,11 @@ classifier.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Labels per category per crop | 10 | recommended labels of each category in each crop (not enforced) |
+| Labels per category per crop | 15 | recommended labels of each category in each crop (not enforced) |
 | Min. slices per organoid | 4 | organoids with fewer slices are left out of proportions and statistics |
 | Test images per clone | 2 | random images per clone, never used for training, for the test set |
 | Test crop size | 35 % | test crop side as a percentage of the image side |
-| Test labels per category per crop | 5 | recommended test labels of each category in each test crop |
+| Test labels per category per crop | 15 | recommended test labels of each category in each test crop |
 | Compare groups by | Genotype | or Clone |
 | Crop size | 50 % | crop side as a percentage of the image side |
 | Neighbourhood ring | 30 px | ring around each nucleus measured for context (as ilastik's "neighborhood") |

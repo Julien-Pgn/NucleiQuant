@@ -39,7 +39,7 @@ function renderStart(root, ctx) {
       h("h2", { class: "card-title" }, ready ? `${st.files.n} images to classify` : "Not ready yet"),
       h("p", { class: "muted", style: { lineHeight: "1.55" } }, ready
         ? `Each image is segmented, measured and classified, then the Excel file, plots and statistics are written. Expect about ${duration(perImage * st.files.n)} on this computer (${st.system.device.device === "GPU" ? "GPU" : "CPU only"}). You can stop at any time and resume later.`
-        : "Label your crops, preview the classification and click “Classify all images” there."),
+        : "Label your crops, preview the classification and click “Accept classifier” there; then choose whether to test it before classifying all images."),
       p.imported_classifier ? h("div", { class: "status" }, icon("info"), "Using a classifier reused from another project.") : null,
       !ready ? h("a", { class: "btn", href: p.imported_classifier ? "#/project" : "#/preview", style: { alignSelf: "flex-start" } }, "Go to Preview") : null)));
 }
@@ -98,9 +98,12 @@ function renderDashboard(root, ctx, res) {
         h("span", { class: "l" }, st.test.stale ? "Test accuracy (earlier classifier)" : "Test accuracy"),
         h("span", { class: "v" }, `${(100 * st.test.balanced_accuracy).toFixed(0)}%`),
         h("span", { class: "s" }, `balanced · 95 % CI ${(100 * st.test.balanced_accuracy_ci[0]).toFixed(0)}–${(100 * st.test.balanced_accuracy_ci[1]).toFixed(0)} % · ${st.test.n} cells`))
-      : h("a", { class: "card tile", href: "#/test", style: { color: "inherit", textDecoration: "none" } },
-        h("span", { class: "l" }, "Test accuracy"), h("span", { class: "v", style: { color: "#80868E" } }, "–"),
-        h("span", { class: "s" }, "not measured yet · open Test")));
+      : p.imported_classifier
+        ? h("div", { class: "card tile" }, h("span", { class: "l" }, "Test accuracy"), h("span", { class: "v", style: { color: "#80868E" } }, "–"),
+          h("span", { class: "s" }, "see the project the classifier came from"))
+        : h("a", { class: "card tile", href: "#/test", style: { color: "inherit", textDecoration: "none" } },
+          h("span", { class: "l" }, "Test accuracy"), h("span", { class: "v", style: { color: "#80868E" } }, "–"),
+          h("span", { class: "s" }, "not measured yet · open Test")));
 
   // ---- proportions chart (interactive: the user chooses what makes 100 %)
   const refKey = `nq:${p.dir}:reference`;

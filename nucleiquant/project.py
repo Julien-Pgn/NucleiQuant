@@ -29,9 +29,13 @@ CHANNEL_COLORS = ["#386BFF", "#40FF73", "#FF389E", "#D4D4D8", "#FFB020", "#00E5F
 CATEGORY_COLORS = ["#FF8A3D", "#3DB2FF", "#FF5FA2", "#B18CFF", "#2DD4BF", "#C3E14B", "#FFD166", "#F87171"]
 
 DEFAULT_CATEGORIES = [
-    {"id": "dead", "name": "Dead", "color": "#A1A1AA", "builtin": True},
-    {"id": "unstained", "name": "Unstained", "color": "#E4E4E7", "builtin": True},
+    {"id": "dead", "name": "Dead", "color": "#52525B", "builtin": True},
+    {"id": "unstained", "name": "Unstained", "color": "#386BFF", "builtin": True},
 ]
+
+# Earlier default colours of the built-in categories: upgraded to the current
+# defaults on load, unless the user picked a colour of their own
+OLD_BUILTIN_COLORS = {"dead": ["#A1A1AA"], "unstained": ["#E4E4E7"]}
 
 DEFAULT_SETTINGS = {
     # Segmentation (stardist_haug2). Percentiles of the nuclear channel used
@@ -43,12 +47,12 @@ DEFAULT_SETTINGS = {
     "crop_fraction": 0.5,
     # Recommended labels per category in each crop (not enforced: a crop may not
     # contain that many cells of a category)
-    "labels_per_crop": 10,
+    "labels_per_crop": 15,
     # Independent test set: random images per clone not used for training, smaller
     # crops, a few labels per category (blind to predictions)
     "test_images_per_clone": 2,
     "test_crop_fraction": 0.35,
-    "test_labels_per_crop": 5,
+    "test_labels_per_crop": 15,
     # Features
     "ring_radius": 30,
     "perinuclear_radius": 4,
@@ -121,7 +125,7 @@ class Project:
                 "color": CHANNEL_COLORS[c % len(CHANNEL_COLORS)],
             })
         data = {
-            "version": 2,
+            "version": 3,
             "name": name,
             "created": _now(),
             "modified": _now(),
@@ -154,6 +158,17 @@ class Project:
         settings = copy.deepcopy(DEFAULT_SETTINGS)
         settings.update(data.get("settings", {}))
         data["settings"] = settings
+        if data.get("version", 2) < 3:
+            # One-time upgrade to the V2.3 defaults; values the user changed are kept
+            defaults = {c["id"]: c["color"] for c in DEFAULT_CATEGORIES}
+            for c in data.get("categories", []):
+                if c.get("builtin") and c["color"] in OLD_BUILTIN_COLORS.get(c["id"], []):
+                    c["color"] = defaults[c["id"]]
+            if settings["labels_per_crop"] == 10:
+                settings["labels_per_crop"] = DEFAULT_SETTINGS["labels_per_crop"]
+            if settings["test_labels_per_crop"] == 5:
+                settings["test_labels_per_crop"] = DEFAULT_SETTINGS["test_labels_per_crop"]
+            data["version"] = 3
         project = cls(project_dir, data)
         remember_project(project_dir)
         return project

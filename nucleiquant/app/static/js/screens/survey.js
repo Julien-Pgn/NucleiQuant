@@ -53,8 +53,14 @@ export async function render(root, ctx) {
 
     const toggle = async (image) => {
       const sel = data.selection.filter((s) => s.image !== image);
-      if (!selected.has(image)) sel.push({ image, role: "Manual" });
-      else {
+      if (!selected.has(image)) {
+        // A test image moved to training loses its test crop (and its blind labels)
+        const tc = (p.test_crops || []).find((c) => c.image === image);
+        const nTest = tc ? Object.values(st.test_labels.per_crop[tc.id] || {}).reduce((a, b) => a + b, 0) : 0;
+        if (tc && !(await confirm("Use a test image for training?",
+          `This image is one of the test images. Its test crop${nTest ? ` and its ${nTest} blind labels` : ""} will be removed and another test image drawn when the crops are updated.`, "Use for training", nTest > 0))) return;
+        sel.push({ image, role: "Manual" });
+      } else {
         const crop = p.crops.find((c) => c.image === image);
         const n = crop ? Object.values(st.labels.per_crop[crop.id] || {}).reduce((a, b) => a + b, 0) : 0;
         if (n && !(await confirm("Remove this training image?", `Its crop has ${n} labeled nuclei; they will be deleted when crops are updated.`, "Remove", true))) return;

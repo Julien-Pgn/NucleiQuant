@@ -74,8 +74,17 @@ def part1(page):
     page.wait_for_timeout(6000)
     shot(page, "04a-crops-running")
     expect(page.get_by_role("button", name="Start labeling")).to_be_enabled(timeout=300000)
+    # The same job also prepares the test crops; wait for it to finish
+    expect(page.get_by_text("Test crops", exact=True)).to_be_visible(timeout=300000)
+    expect(page.locator(".side-job")).to_have_count(0, timeout=300000)
     page.wait_for_timeout(1500)
     shot(page, "04-crops")
+    # A crop's image can be swapped (e.g. too faint to label): open and close the dialog
+    page.get_by_role("button", name="Replace image…").first.click()
+    expect(page.get_by_text("Pick another image")).to_be_visible()
+    page.wait_for_timeout(300)
+    shot(page, "04b-replace-dialog")
+    page.get_by_role("button", name="Cancel").click()
 
     page.get_by_role("button", name="Start labeling").click()
     expect(page.get_by_role("heading", name="Label cells")).to_be_visible()
@@ -169,7 +178,12 @@ def part2(page):
     page.wait_for_timeout(400)
     shot(page, "06b-preview-confusion")
 
-    page.get_by_role("button", name="Classify all 12 images").click()
+    # Accepting the classifier leads to the test decision; skip it here (part 3 does the test)
+    page.get_by_role("button", name="Accept classifier").click()
+    expect(page.get_by_role("heading", name="Test the classifier?")).to_be_visible()
+    page.wait_for_timeout(500)
+    shot(page, "06c-test-decide")
+    page.get_by_role("button", name="Skip — classify all 12 images").click()
     expect(page.get_by_role("heading", name="Classifying all images")).to_be_visible()
     page.wait_for_timeout(15000)
     shot(page, "07-running")
@@ -197,12 +211,12 @@ def part2(page):
 
 
 def part3(page):
-    """Test step: create the test crops (labels are seeded next)."""
+    """Test step: start blind labeling on the prepared test crops (labels are seeded next)."""
     page.goto(BASE + "/#/test")
-    expect(page.get_by_role("heading", name="Test set")).to_be_visible()
+    expect(page.get_by_role("heading", name="Test the classifier?")).to_be_visible()
     page.wait_for_timeout(800)
     shot(page, "10b-test-intro")
-    page.get_by_role("button", name="Create test crops").click()
+    page.get_by_role("button", name="Start blind labeling").click()
     expect(page.get_by_role("button", name="Evaluate accuracy")).to_be_visible(timeout=300000)
     expect(page.get_by_text("Test crop 1 of")).to_be_visible(timeout=60000)
     page.wait_for_timeout(1000)
@@ -221,6 +235,8 @@ def part4(page):
         page.get_by_role("button", name="Evaluate anyway").click()
     expect(page.get_by_role("heading", name="Test accuracy")).to_be_visible(timeout=120000)
     expect(page.get_by_text("Balanced accuracy").first).to_be_visible()
+    expect(page.get_by_text("Macro F1").first).to_be_visible()
+    expect(page.get_by_text("What the numbers mean")).to_be_visible()
     page.wait_for_timeout(800)
     shot(page, "11-test-report")
     page.goto(BASE + "/#/results")

@@ -85,7 +85,7 @@ export async function render(root, ctx, route) {
     cache.forEach((d) => { d.predictions = null; });
   }
 
-  const display = { outlines: true, fill: true, uncertain: false, highlight: false, erase: false };
+  const display = { outlines: true, fill: true, uncertain: false, highlight: false, erase: false, hidden: new Set() };
   let channels = null;
   let data = null;
   const threshold = () => p().settings.uncertain_threshold;
@@ -147,13 +147,12 @@ export async function render(root, ctx, route) {
         go);
     } else {
       const stale = !!st.project.classifier.stale;
-      const n = st.files.n;
-      const go = h("button", { class: "btn primary", type: "button", disabled: stale }, `Classify all ${n} image${n > 1 ? "s" : ""}`, icon("arrow", 16, { width: 2 }));
+      const go = h("button", { class: "btn primary", type: "button", disabled: stale }, "Accept classifier", icon("arrow", 16, { width: 2 }));
       go.addEventListener("click", async () => {
         try {
           await api.post("/api/classifier/validate");
-          await api.post("/api/batch");
-          ctx.navigate("results");
+          await ctx.refresh();
+          ctx.navigate("test");
         } catch (e) { errorToast(e); }
       });
       header.append(
@@ -214,6 +213,7 @@ export async function render(root, ctx, route) {
     if (!pr) return null;
     if (display.uncertain && pr.prob >= threshold()) return null;
     const pc = cats()[pr.cat];
+    if (pc && display.hidden.has(pc.id)) return null;
     return { stroke: pc ? pc.color : "#FFFFFF", fill: display.highlight && cat ? cat.color : null, weight: display.highlight && cat ? 2 : 1, halo: true };
   };
 
@@ -311,7 +311,24 @@ export async function render(root, ctx, route) {
     legend.innerHTML = "";
     legend.classList.toggle("hidden", !preview);
     if (!preview) return;
-    for (const c of cats()) legend.append(h("span", { class: "legend-item" }, h("span", { class: "sq", style: { borderColor: c.color } }), c.name));
+    for (const c of cats()) {
+      const off = display.hidden.has(c.id);
+      const item = h("button", {
+        class: "legend-item", type: "button", "aria-pressed": off ? "false" : "true",
+        title: off ? `Show ${c.name} again` : `Hide ${c.name} to see the others better`,
+        style: { background: "none", border: "none", padding: "0", cursor: "pointer", color: "inherit", font: "inherit", opacity: off ? "0.35" : "1" },
+      }, h("span", { class: "sq", style: { borderColor: off ? "#5A6068" : c.color } }), c.name);
+      item.addEventListener("click", () => {
+        if (off) display.hidden.delete(c.id); else display.hidden.add(c.id);
+        drawLegend(); viewer.draw();
+      });
+      legend.append(item);
+    }
+    if (display.hidden.size) {
+      const all = h("button", { class: "link", type: "button", style: { fontSize: "12px" } }, "Show all");
+      all.addEventListener("click", () => { display.hidden.clear(); drawLegend(); viewer.draw(); });
+      legend.append(all);
+    }
   };
 
   const drawFilm = () => {
@@ -334,8 +351,8 @@ export async function render(root, ctx, route) {
     }
     film.append(h("div", { class: "hints" },
       ...(preview
-        ? [["1–9", "relabel"], ["R", "retrain"], ["U", "uncertain only"], ["H", "hide outlines"]]
-        : [["1–9", "category"], ["E", "erase"], ["H", "hide outlines"], ["Scroll", "zoom"]]).map(([k, t]) => h("span", {}, h("b", {}, k), ` ${t}`))));
+        ? [["1–9", "relabel"], ["R", "retrain"], ["U", "uncertain only"], ["H", "hide masks"], ["Legend", "show/hide a category"]]
+        : [["1–9", "category"], ["E", "erase"], ["H", "hide masks"], ["Scroll", "zoom"]]).map(([k, t]) => h("span", {}, h("b", {}, k), ` ${t}`))));
   };
 
   const colorChoices = () => [
@@ -348,6 +365,7 @@ export async function render(root, ctx, route) {
   // The new-category draft survives redraws of the inspector (e.g. when a crop finishes loading)
   const draft = { name: "", color: null };
   let showConfusion = false;
+  let showFeatures = false;
   const drawInspector = () => {
     st = ctx.store.state;
     inspector.innerHTML = "";
@@ -373,22 +391,25 @@ export async function render(root, ctx, route) {
       });
       const name = h("span", { class: "name", title: c.builtin ? "Always included" : "Double-click to rename" }, c.name,
         c.builtin ? icon("lock", 12, { color: "#80868E", width: 2 }) : null);
+      const startRename = (e) => {
+        e.stopPropagation();
+        const inp = h("input", { class: "input small", value: c.name, style: { width: "130px" } });
+        name.replaceWith(inp);
+        inp.focus(); inp.select();
+        const done = async () => {
+          if (inp.value.trim() && inp.value.trim() !== c.name) {
+            try { await api.patch(`/api/categories/${c.id}`, { name: inp.value }); await ctx.refresh(); } catch (err) { errorToast(err); }
+          }
+          drawInspector(); drawLegend();
+        };
+        inp.addEventListener("keydown", (ev) => { ev.stopPropagation(); if (ev.key === "Enter") inp.blur(); if (ev.key === "Escape") { inp.value = c.name; inp.blur(); } });
+        inp.addEventListener("blur", done);
+        inp.addEventListener("click", (ev) => ev.stopPropagation());
+      };
+      const ren = !c.builtin && !test ? h("button", { class: "icon-btn", type: "button", "aria-label": `Rename ${c.name}`, title: `Rename ${c.name}`, style: { width: "22px", height: "22px", opacity: "0.6" } }, icon("edit", 13)) : null;
       if (!c.builtin && !test) {
-        name.addEventListener("dblclick", (e) => {
-          e.stopPropagation();
-          const inp = h("input", { class: "input small", value: c.name, style: { width: "130px" } });
-          name.replaceWith(inp);
-          inp.focus(); inp.select();
-          const done = async () => {
-            if (inp.value.trim() && inp.value.trim() !== c.name) {
-              try { await api.patch(`/api/categories/${c.id}`, { name: inp.value }); await ctx.refresh(); } catch (err) { errorToast(err); }
-            }
-            drawInspector(); drawLegend();
-          };
-          inp.addEventListener("keydown", (ev) => { ev.stopPropagation(); if (ev.key === "Enter") inp.blur(); if (ev.key === "Escape") { inp.value = c.name; inp.blur(); } });
-          inp.addEventListener("blur", done);
-          inp.addEventListener("click", (ev) => ev.stopPropagation());
-        });
+        name.addEventListener("dblclick", startRename);
+        ren.addEventListener("click", startRename);
       }
       const del = !c.builtin && !preview && !test ? h("button", { class: "icon-btn", type: "button", "aria-label": `Delete ${c.name}`, style: { width: "22px", height: "22px", opacity: "0.6" } }, icon("trash", 13)) : null;
       if (del) del.addEventListener("click", async (e) => {
@@ -401,7 +422,7 @@ export async function render(root, ctx, route) {
         } catch (err) { errorToast(err); }
       });
       const row = h("button", { class: `cat ${on ? "on" : ""}`, type: "button", "aria-pressed": on ? "true" : "false" },
-        h("span", { class: "top" }, sw, name,
+        h("span", { class: "top" }, sw, name, ren,
           !preview && nHere >= target ? icon("tick", 14, { color: "#5BD68A", width: 2.5 }) : null,
           h("span", { class: "count", title: preview ? "Labels in all crops" : "Labels in this crop / recommended" },
             preview ? `${n}` : [String(nHere), h("span", {}, ` / ${target}`)]),
@@ -428,6 +449,23 @@ export async function render(root, ctx, route) {
       };
       inp.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") add(); if (e.key === "Escape") close(); });
       catSec.append(h("div", { class: "cat-edit" }, colBtn, inp, h("button", { class: "btn small primary", type: "button", onclick: add }, "Add")));
+      // Quick picks: name the category after one of the project's channels
+      const taken = new Set(cats().map((c) => c.name.toLowerCase()));
+      const suggestions = p().channels.filter((ch, i) => i !== p().nuclear_channel && !taken.has(ch.name.toLowerCase()));
+      if (suggestions.length) {
+        catSec.append(h("div", { style: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px", padding: "0 4px" } },
+          h("span", { class: "faint", style: { fontSize: "12px" } }, "Name it after a channel:"),
+          ...suggestions.map((ch) => {
+            const chip = h("button", { type: "button", class: "pill neutral", style: { display: "inline-flex", alignItems: "center", gap: "6px", border: "none", cursor: "pointer" } },
+              h("span", { style: { width: "9px", height: "9px", borderRadius: "3px", background: ch.color } }), ch.name);
+            chip.addEventListener("click", () => {
+              draft.name = ch.name; inp.value = ch.name;
+              draft.color = ch.color; colBtn.style.background = ch.color;
+              inp.focus();
+            });
+            return chip;
+          })));
+      }
       setTimeout(() => inp.focus(), 0);
     }
     if (test) {
@@ -438,7 +476,7 @@ export async function render(root, ctx, route) {
       const left = LB().needed_per_crop[current[CK]] || 0;
       catSec.append(h("div", { class: "faint", style: { fontSize: "12.5px", padding: "4px 4px 0", lineHeight: "1.5" } },
         LB().total === 0
-          ? `Click nuclei to label them with the selected category. Recommended: ${target} of each category in each crop. Click a colour square to change a category's colour.`
+          ? `Click nuclei to label them with the selected category. Recommended: ${target} of each category in each crop. Click a colour square to change a category's colour, the pencil to rename it.`
           : left > 0
             ? `This crop: ${left} to go. If it has fewer than ${target} cells of a category, label what you find and move on. Cells with two markers need their own category (e.g. “S+T”).`
             : `This crop has ${target} of each category. ${LB().complete ? "All crops are complete." : "Use ] to go to the next crop."}`));
@@ -487,7 +525,7 @@ export async function render(root, ctx, route) {
       disp.append(toggleRow(`Uncertain cells only (< ${Math.round(threshold() * 100)}%)`, "uncertain"));
       disp.append(toggleRow("Highlight my labels", "highlight"));
     }
-    disp.append(toggleRow("Outlines", "outlines", (v) => { viewer.showOutlines = v; }));
+    disp.append(toggleRow("Segmentation masks", "outlines", (v) => { viewer.showOutlines = v; }));
     if (!preview) disp.append(toggleRow("Fill labeled cells", "fill"));
     inspector.append(disp);
   };
@@ -526,6 +564,28 @@ export async function render(root, ctx, route) {
         ...info.top_features.slice(0, 8).map((f) => h("div", { style: { display: "flex", gap: "8px", fontSize: "12.5px" } },
           h("span", { style: { flex: "1" }, class: "muted" }, featureLabel(f.feature, p().channels)),
           h("span", { class: "mono faint" }, f.importance.toFixed(3)))));
+    }
+    const featToggle = h("button", { class: "link", type: "button", style: { color: "#A3A9B1", display: "flex", alignItems: "center", gap: "8px", fontSize: "13.5px" } },
+      icon(showFeatures ? "down" : "chevron"), "What the classifier measures");
+    featToggle.addEventListener("click", () => { showFeatures = !showFeatures; drawInspector(); });
+    sec.append(featToggle);
+    if (showFeatures) {
+      const groups = [
+        ["Size and shape", "area, perimeter, roundness, elongation, convexity — small round nuclei (often dead cells) differ from large ones here"],
+        ["Brightness", "mean, spread and quantiles of each channel inside the nucleus, also rescaled to the whole image's staining range so dim and bright images compare fairly"],
+        ["Centre vs rim", "whether a stain sits in the middle of the nucleus or at its edge"],
+        ["Around the nucleus", "signal in a ring (30 px) and a thin perinuclear zone (4 px) outside the nucleus — catches cytoplasmic staining"],
+        ["Contrasts", "nucleus vs its surroundings, per channel"],
+        ["Channel combinations", "correlations between channels and marker-to-nuclear ratios"],
+        ["Texture", "smooth vs grainy staining, edges and bright spots"],
+        ["Crowding", "distance to the nearest nucleus and how many neighbours sit within the ring — dense regions (e.g. a dead core) differ here"],
+      ];
+      sec.append(
+        h("div", { style: { display: "flex", flexDirection: "column", gap: "7px" } },
+          ...groups.map(([t, d]) => h("div", { style: { fontSize: "12.5px", lineHeight: "1.5" } },
+            h("span", { style: { color: "#EDEEF0", fontWeight: "500" } }, `${t}: `), h("span", { class: "muted" }, d)))),
+        h("div", { class: "faint", style: { fontSize: "12px", lineHeight: "1.5" } },
+          `${info.n_features} measurements per nucleus in total. The position of a nucleus in the image and its orientation are deliberately not used: they say where a cell is, not what it is. The ones the forest relies on most are under “Where it gets confused”.`));
     }
     return sec;
   };

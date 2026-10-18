@@ -22,7 +22,7 @@ docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:
     nucleiquant:v2 python scripts/validation/seed_labels_from_v1.py --url "$URL" --per-crop 12 2>&1 | grep -E "Seeded|Error|Traceback" || true
 pw 2
 pw 3
-# Test labels (5 per category per test crop), again from V1, through the app's API
+# Test labels (15 per category per test crop, the recommendation), again from V1, through the app's API
 docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" -w /workspace \
-    nucleiquant:v2 python scripts/validation/seed_labels_from_v1.py --url "$URL" --test --per-crop 5 2>&1 | grep -E "Seeded|Error|Traceback" || true
+    nucleiquant:v2 python scripts/validation/seed_labels_from_v1.py --url "$URL" --test --per-crop 15 2>&1 | grep -E "Seeded|Error|Traceback" || true
 pw 4

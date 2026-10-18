@@ -118,21 +118,26 @@ def pick_training_images(entries, channel, group_of):
     return picks
 
 
-def pick_test_images(image_names, exclude, group_of, n_per_group=2, seed=0):
+def pick_test_images(image_names, exclude, group_of, n_per_group=2, seed=0, keep=()):
     """Random images per group (clone) for the independent test set.
 
     Images used for training (`exclude`) are never picked. Random rather than
     intensity-based, so the test set represents the whole experiment. The same seed
-    gives the same choice.
+    gives the same choice. `keep` lists test images already in place: each group is
+    only topped up to `n_per_group`, and only the new picks are returned.
     """
     rng = np.random.default_rng(seed)
+    keep = set(keep)
+    have = {}
+    for name in keep:
+        have[group_of(name)] = have.get(group_of(name), 0) + 1
     groups = {}
     for name in sorted(image_names):
-        if name not in exclude:
+        if name not in exclude and name not in keep:
             groups.setdefault(group_of(name), []).append(name)
     picks = []
     for g in sorted(groups):
         items = groups[g]
-        take = rng.permutation(len(items))[: n_per_group]
+        take = rng.permutation(len(items))[: max(0, n_per_group - have.get(g, 0))]
         picks += [items[i] for i in sorted(take)]
     return picks

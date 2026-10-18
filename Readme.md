@@ -9,7 +9,7 @@ no programming.
 
 It is built for immunostained tissue sections (organoids, brain slices…) with a nuclear
 stain (e.g. DAPI) and 1–4 markers, and uses **stardist_haug2**, a StarDist model
-fine-tuned for dense tissue ([Pigeon et al., 2025](https://doi.org/10.1101/2025.10.27.684791)).
+fine-tuned for dense tissue ([Pigeon et al., 2027](https://doi.org/10.1101/2025.10.27.684791)).
 
 ---
 
@@ -100,10 +100,10 @@ inside your images folder.
 |---|---|---|---|
 | 1 | **Project** | Pick the images folder, name the channels, choose the nuclear channel, type each clone's genotype. | 1 min |
 | 2 | **Survey** | Every image is measured. Three training images per clone are picked for you — dim, typical and bright staining — so the classifier copes with staining variation. | seconds |
-| 3 | **Crops** | A region of each training image is cut and its nuclei are found. Drag a frame to move it. | 1 min |
-| 4 | **Label** | Create your categories (e.g. PAX6+, BRN2+) and give each a colour — e.g. the colour of its channel. *Dead* and *Unstained* are always there. Click about **10 nuclei of each category in each crop** (recommended: if a crop has fewer, label what it has and move on). | 15–30 min |
+| 3 | **Crops** | A region of each training image is cut and its nuclei are found. Drag a frame to move it, or replace its image if it is too faint to label. The crops for the optional test (step 6) are prepared too. | 1 min |
+| 4 | **Label** | Create your categories (e.g. PAX6+, BRN2+) and give each a colour — e.g. the colour of its channel. *Dead* and *Unstained* are always there. Click about **15 nuclei of each category in each crop** (recommended: if a crop has fewer, label what it has and move on). | 15–30 min |
 | 5 | **Preview** | Every nucleus is coloured by its predicted type, with the accuracy on crops the classifier didn't train on. Correct mistakes, retrain, validate. | 5 min |
-| 6 | **Test** *(optional, recommended for papers)* | A few images never used for training are drawn at random; you label about 5 cells of each category in a small crop of each, without seeing the classifier's answers. You get the accuracy with 95 % confidence intervals, per category and per image, and a methods paragraph. | 10–15 min |
+| 6 | **Test** *(optional, recommended for papers)* | A few images never used for training are drawn at random; you label about 15 cells of each category in a small crop of each, without seeing the classifier's answers. You get the accuracy with 95 % confidence intervals, per category and per image, and a methods paragraph. | 10–15 min |
 | 7 | **Results** | All images are classified. Choose what counts as 100 % (all nuclei, living cells, only stained cells, or any combination) and see the proportions as bar plots with statistics. Everything is in the Excel file, and you can inspect any image. | 15 s – 1 min per image |
 
 The full, illustrated walkthrough is in the **[user guide](docs/user_guide.md)** (also
@@ -145,7 +145,7 @@ nuclei):
 
 **On your own data**, the **Test** step measures the accuracy that matters for a paper: on
 images that were not used for training, labeled blind to the classifier's answers. The
-report gives the balanced accuracy, accuracy and Cohen's κ with 95 % confidence intervals,
+report gives the balanced accuracy, accuracy, Cohen's κ and macro F1 with 95 % confidence intervals,
 per category and per image, and a ready-to-adapt methods paragraph; it is also in the Excel
 file (sheet `test_set`).
 

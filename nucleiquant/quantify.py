@@ -257,6 +257,7 @@ def _write_test_sheet(xw, project, report):
         ["Balanced accuracy (mean recall)", m["balanced_accuracy"], *ci(m["balanced_accuracy_ci"]), "bootstrap over cells"],
         ["Accuracy on the test cells", m["accuracy"], *ci(m["accuracy_ci"]), "Wilson"],
         ["Cohen's kappa", m["kappa"], *ci(m["kappa_ci"]), "bootstrap over cells"],
+        ["Macro-averaged F1", m.get("macro_f1"), *ci(m.get("macro_f1_ci", (None, None))), "bootstrap over cells"],
         ["Test cells", m["n"], None, None, ""],
         ["Test images (not used for training)", report["n_images"], None, None, ""],
         ["Evaluated on", report["date"], None, None, f"classifier {report['classifier_hash']}"],

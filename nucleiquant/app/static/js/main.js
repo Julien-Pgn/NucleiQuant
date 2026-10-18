@@ -81,7 +81,8 @@ function renderSidebar() {
   const info = stepInfo(st);
   side.innerHTML = "";
   side.append(
-    h("a", { class: "brand", href: "#/" }, icon("logo", 24), "NucleiQuant"),
+    h("a", { class: "brand", href: "#/", title: `NucleiQuant ${st.system.version}` }, icon("logo", 24), "NucleiQuant",
+      h("span", { class: "faint", style: { fontSize: "11px", fontWeight: "400", marginLeft: "6px" } }, `v${st.system.version}`)),
     h("div", { class: "proj" },
       h("div", { class: "eyebrow" }, "Project"),
       h("div", { class: "proj-name", title: st.project.name }, st.project.name),

@@ -9,6 +9,10 @@ $Container = "nucleiquant-app"
 $Port = if ($env:NQ_PORT) { $env:NQ_PORT } else { "8765" }
 $Url = "http://localhost:$Port"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+# The app's version (shown so you know which one you are running)
+$Version = Select-String -Path (Join-Path $Repo "nucleiquant\__init__.py") -Pattern '^__version__ = "(.*)"' |
+    ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1
+if ($Version) { $AppName = "$AppName $Version" }
 
 function Say($m) { Write-Host "`n$m" -ForegroundColor White }
 function Info($m) { Write-Host "  $m" }

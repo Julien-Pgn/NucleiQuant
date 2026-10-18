@@ -217,6 +217,67 @@ tests and walkthrough; `Readme.md`, `docs/user_guide.md`, `AGENTS.md`.
 
 ---
 
+## V2.3 — first real-use feedback: clearer flow, clearer numbers (2026-10-18)
+
+**What was asked** (after the user's first full run on real data): rename a category after
+adding it; offer the channel names when naming a category; call the outlines "segmentation
+masks"; replace a training crop whose image is too faint to label; raise the recommended
+labels to 15 per category per crop (and 15 for the test); Dead dark grey and Unstained
+DAPI-blue by default; show/hide single categories in the Preview; explain the classifier's
+features in the app (not a black box); prepare the test crops during the Crops step; after
+Preview go to Test, where the user decides to test or to skip to Results; show F1 in the
+test report (test counts may be unbalanced) and explain Cohen's κ and the training number.
+
+**Changes**
+
+| Change | Why | Weaknesses / risks |
+|---|---|---|
+| Label screen: pencil icon to rename a category (double-click still works); channel names offered as quick picks when adding a category (sets name + channel colour) | Rename existed but was undiscoverable; categories are usually named after channels | Built-in Dead/Unstained stay locked (ids are invariants) |
+| Display toggle renamed "Outlines" → "Segmentation masks" (and the H-key hints) | Clearer for the audience | None |
+| **Replace image…** on each crop card (`api.replace_crop`, `POST /api/crops/{id}/replace`): modal lists the clone's unused images, brightest in the survey channel first; crop is re-placed, re-segmented, its labels deleted; the selection entry becomes "Manual" | Two Q10 picks were too faint to label on real data | The role no longer reflects the Q10/50/90 logic (shown as Manual); labels on the old crop are lost (confirmed in a dialog) |
+| Defaults: `labels_per_crop` 10 → 15, `test_labels_per_crop` 5 → 15; existing projects at the old defaults are upgraded once (`project.json` version 2 → 3) | User judged 10 too few; test categories were labeled unevenly | More labeling work (~45/category/clone, ~30 test cells/category/clone); a user who deliberately kept 10/5 is upgraded anyway (indistinguishable from the default) |
+| Default colours: Dead `#52525B` (dark grey), Unstained `#386BFF` (DAPI blue); built-ins still wearing the old defaults are upgraded once with the same version gate | Requested; Unstained = DAPI-only is semantically blue | Same indistinguishability caveat; dark grey is less visible on dark background (halo keeps it readable) |
+| Preview legend chips toggle a category's visibility (+ Show all) | Crowded crops | Hidden nuclei can still be clicked/relabeled (hit-test unchanged); visibility resets when leaving the screen |
+| Preview: "What the classifier measures" expander (plain-words feature groups); user guide too | Feature transparency was requested | A summary, not the full ~300-column list (top features remain under "Where it gets confused") |
+| Test crops are picked and segmented inside the crops job (`_ensure_test_crops`); Crops screen shows their status; a test crop whose image enters the training selection is dropped (with its labels; the Survey screen warns first) and the clone is topped up with a new test image (fresh id) | Test step starts instantly; the user decided test placement should happen early | Crops job takes longer (2 more segmentations per clone) even if the user skips the test; `test_images_per_clone` only applies when crops are next updated |
+| Flow: Preview's button is now **Accept classifier** (validates, goes to Test); Test shows a decision screen (Start blind labeling / Skip — classify all images); the report gets a **Classify all images / Results** button | Requested: decide about the test after Preview, then move on to Results explicitly | One more click to reach Results when skipping; old "Create test crops" intro replaced |
+| Test report: **Macro F1** tile with bootstrap CI (`evaluation.macro_f1`), a "What the numbers mean" card (balanced accuracy, accuracy, macro F1, κ, training-vs-test), macro F1 in the methods text and in the Excel `test_set` sheet | Test counts can be unbalanced; κ and the training tile confused the user | Old `report.json` files have no macro F1 until re-evaluated (shown as –) |
+| Version **2.3.0** (`nucleiquant.__version__`, `pyproject.toml`), shown in the sidebar brand, the home screen and by the launcher. The page links its files under `/static/<version>/` (the plain `/static/` stays for tools), and `/static/` answers are `Cache-Control: no-cache` | The app still said 2.0.0, and the user's browser kept the old JavaScript for days after an update (static files had no cache policy, so the browser used heuristic caching) — "it looks like the previous version", "why can't I rename a category?" (the pencil was in the new file). With per-version URLs a plain reload always gets the matching files | The version must be bumped by hand for every entry in this log, otherwise the cache protection does nothing for that release |
+
+**Review round (same day).** A three-lens adversarial code review (backend, frontend,
+workflow) of this change set confirmed and led to these fixes:
+
+| Finding | Fix |
+|---|---|
+| Test crops never went stale after a settings change (ring radius, texture levels, nuclear channel, crop size…) — reachable now that they are built early; `evaluate_test` would feed old-settings features to a retrained forest | `update_project` marks `test_crops` stale together with the training crops (also on `test_crop_fraction`); Crops screen rebuilds any non-ready crop, test crops included |
+| `replace_crop` (and the older `move_crop`) deleted a crop's labels without marking the classifier stale | `_drop_crop` invalidates the training when labels were removed; `move_crop` refuses test-crop ids |
+| A test crop dropped because its image entered the training selection was never replaced (only an empty set was repicked), and the blind labels vanished silently | `survey.pick_test_images(keep=…)` tops each clone up; new crops get fresh ids (`next_test`); the Survey screen asks before a test image is used for training |
+| The Test decision/report buttons validated a **stale** classifier (bypassing Preview's retrain gate) | `validate_classifier` and `evaluate_test` refuse a stale classifier; the buttons are disabled with a banner linking to Preview |
+| Progress screen always dropped the user into blind labeling, even when they had only accepted the classifier | It returns to the decision screen unless "Start blind labeling" was clicked |
+| `replace_crop` checked the project in the HTTP thread but mutated it later on the job worker | Checks repeated inside the job under the project lock |
+| Methods text quoted the *current* recommendation, not what was labeled; per-clone count came from the setting | Report stores the actual per-crop/category range and per-clone counts; the text uses them |
+| Results hint still said "click Classify all images on Preview"; Results tile offered the Test step to imported classifiers (locked in the sidebar); NaN bar widths in the replace dialog for an all-zero clone | Text updated; tile no longer links for imported classifiers; `vmax` guarded |
+
+Not changed (documented): a V2.2 user who labeled 5 test cells per category and is upgraded
+to 15 sees "to go" counts on a test they considered complete (the methods text now reports
+actual counts, so the paper sentence stays right); the Test step stays locked for imported
+classifiers; `Readme.md` cites "Pigeon et al., 2027" in the author's own pending edits
+(the DOI is a 2025 bioRxiv preprint — probably a typo).
+
+**Validation.** 33 unit tests pass (new: macro F1 against hand-computed values and its
+bootstrap CI; per-clone top-up of the test set). Frontend modules import cleanly in
+Chromium. Full browser walkthrough updated for the new flow (replace dialog, test decision
+screen, macro F1 on the report) and re-run end to end after the review fixes;
+documentation screenshots regenerated.
+
+**Files.** `project.py` (defaults, colour migration), `api.py` (`replace_crop`,
+`_ensure_test_crops`, crops job builds test crops), `evaluation.py` (macro F1 + CI,
+methods text), `quantify.py` (Excel row), `app/server.py` (replace route), `app/static/js/`
+`ui.js` (pencil icon), `label.js` (rename, channel-name picks, legend toggles, masks label,
+feature explainer, Accept classifier), `test.js` (decision screen, report), `crops.js`
+(replace dialog, test-crop status); tests and walkthrough; `Readme.md`,
+`docs/user_guide.md`, `AGENTS.md`.
+
 ## Roadmap and open questions
 
 - **V3**: per-marker (QuPath-style composite) classification — one +/− classifier per marker

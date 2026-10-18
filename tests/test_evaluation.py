@@ -29,6 +29,12 @@ def test_evaluate_metrics():
     assert lo < m["balanced_accuracy"] < hi
     # kappa: po = 0.85, pe = 0.5*0.55 + 0.5*0.45 = 0.5
     assert m["kappa"] == pytest.approx((0.85 - 0.5) / 0.5)
+    # macro F1: dead F1 = 2*0.9*(9/11)/(0.9+9/11), cat1 F1 = 2*0.8*(8/9)/(0.8+8/9)
+    f1_dead = 2 * 0.9 * (9 / 11) / (0.9 + 9 / 11)
+    f1_cat1 = 2 * 0.8 * (8 / 9) / (0.8 + 8 / 9)
+    assert m["macro_f1"] == pytest.approx((f1_dead + f1_cat1) / 2)
+    flo, fhi = m["macro_f1_ci"]
+    assert flo < m["macro_f1"] < fhi
 
 
 def test_pick_test_images_excludes_training_and_is_reproducible():
@@ -40,3 +46,10 @@ def test_pick_test_images_excludes_training_and_is_reproducible():
     assert a == b and len(a) == 4
     assert not set(a) & training
     assert sorted(group(n) for n in a) == ["KO", "KO", "WT", "WT"]
+    # Topping up: both WT and one KO kept -> only one new KO image, never a kept or training one
+    kept = [n for n in a if group(n) == "WT"] + [n for n in a if group(n) == "KO"][:1]
+    more = survey.pick_test_images(names, training, group, n_per_group=2, seed=0, keep=kept)
+    assert [group(n) for n in more] == ["KO"]
+    assert not set(more) & (training | set(kept))
+    # A complete group gets nothing
+    assert survey.pick_test_images(names, training, group, n_per_group=2, seed=0, keep=a) == []
