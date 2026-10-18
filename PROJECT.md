@@ -290,6 +290,16 @@ feature explainer, Accept classifier), `test.js` (decision screen, report), `cro
 - Optional: second annotation of the same cells (intra-/inter-rater agreement), as a
   complement to the test accuracy.
 
+## Version canvas (every screen, version by version)
+
+A page that shows each screen of the app side by side for every version, with a lightbox to
+flip between versions and "new / different / same" badges (pixel difference against the
+previous version): https://claude.ai/artifact/EPj6PHYz9cmXAvP1sQxx7R (private to the
+author; also in the repo as `docs/versions/index.html`). After each version: run the
+walkthrough and commit, add the version to `VERSIONS` in `scripts/version_canvas.py`, run
+`python3 scripts/version_canvas.py`, then republish the page to that link with the
+`docs/versions/img/` files (the author's assistant does this; the recipe is in its notes).
+
 ## How to go back to a version
 
 The author commits each version. To look at or restore an earlier one:

@@ -218,6 +218,10 @@ equals scikit-image's regionprops.
   halo under outlines so any colour stays readable.
 - **Don't commit, tag or push**: the user does all git operations. Log every change set in
   `PROJECT.md` (why, what, weaknesses) and update this file and the user docs.
+- **Version canvas**: after each version (walkthrough run, commit made), add the version to
+  `VERSIONS` in `scripts/version_canvas.py`, run it (`python3 scripts/version_canvas.py`,
+  needs Pillow; or in the container) and republish `docs/versions/` to the claude.ai page
+  linked in `PROJECT.md › Version canvas`, so the user can compare every screen across versions.
 - **Bump the version** (`nucleiquant/__init__.py` and `pyproject.toml`) for every version
   entry in `PROJECT.md`: the sidebar, the home screen and the launcher show it, and the
   page loads its files from `/static/<version>/`, so a reload after an update always gets
